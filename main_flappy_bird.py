@@ -870,12 +870,13 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
     # Set up live graph (rendered to pygame surface using Agg backend)
     live_graph_surface = None
-    GRAPH_WIDTH = 500
-    GRAPH_HEIGHT = SCREENHEIGHT  # Match game height
+    GRAPH_WIDTH = 700
+    GRAPH_HEIGHT = 600  # Taller for better visibility
 
     # Expand window to fit game + graph side by side
     training_window_width = SCREENWIDTH + GRAPH_WIDTH
-    screen = pygame.display.set_mode((training_window_width, SCREENHEIGHT), pygame.RESIZABLE)
+    training_window_height = max(SCREENHEIGHT, GRAPH_HEIGHT)
+    screen = pygame.display.set_mode((training_window_width, training_window_height), pygame.RESIZABLE)
     pygame.display.set_caption('FBML Training')
 
     try:
@@ -909,13 +910,23 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             dpi = 100
             fig, axes = live_plt.subplots(2, 2, figsize=(GRAPH_WIDTH/dpi, GRAPH_HEIGHT/dpi), dpi=dpi)
 
+            # Helper to add secondary y-axis showing pipes (distance / PIPE_SPACING)
+            def add_pipes_axis(ax, color='gray'):
+                ax2 = ax.twinx()
+                ymin, ymax = ax.get_ylim()
+                ax2.set_ylim(ymin / PIPE_SPACING, ymax / PIPE_SPACING)
+                ax2.set_ylabel('≈ Pipes', fontsize=7, color=color)
+                ax2.tick_params(labelsize=6, colors=color)
+                return ax2
+
             # Best Fitness (calculated: harm/min/avg/geo)
             axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
-            axes[0, 0].set_title(f'Best Fitness ({fitness_label})', fontsize=9)
-            axes[0, 0].set_xlabel('Gen', fontsize=8)
-            axes[0, 0].set_ylabel('Fitness', fontsize=8)
-            axes[0, 0].tick_params(labelsize=7)
+            axes[0, 0].set_title(f'Best Fitness ({fitness_label})', fontsize=10)
+            axes[0, 0].set_xlabel('Gen', fontsize=9)
+            axes[0, 0].set_ylabel('Fitness (dist)', fontsize=9, color='blue')
+            axes[0, 0].tick_params(labelsize=8, colors='blue')
             axes[0, 0].grid(True, alpha=0.3)
+            add_pipes_axis(axes[0, 0])
 
             # Mean Fitness with std
             axes[0, 1].plot(gens, mean_fitness, 'g-', linewidth=2, label='Mean')
@@ -923,26 +934,28 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 [m - s for m, s in zip(mean_fitness, sigmas)],
                 [m + s for m, s in zip(mean_fitness, sigmas)],
                 alpha=0.3, color='green')
-            axes[0, 1].set_title('Mean Fitness ± σ', fontsize=9)
-            axes[0, 1].set_xlabel('Gen', fontsize=8)
-            axes[0, 1].set_ylabel('Fitness', fontsize=8)
-            axes[0, 1].tick_params(labelsize=7)
+            axes[0, 1].set_title('Mean Fitness ± σ', fontsize=10)
+            axes[0, 1].set_xlabel('Gen', fontsize=9)
+            axes[0, 1].set_ylabel('Fitness (dist)', fontsize=9, color='green')
+            axes[0, 1].tick_params(labelsize=8, colors='green')
             axes[0, 1].grid(True, alpha=0.3)
+            add_pipes_axis(axes[0, 1])
 
             # Best Raw Distance (single run max)
             axes[1, 0].plot(gens, gen_best_raw, 'c-', linewidth=2)
-            axes[1, 0].set_title('Best Raw (single run)', fontsize=9)
-            axes[1, 0].set_xlabel('Gen', fontsize=8)
-            axes[1, 0].set_ylabel('Distance', fontsize=8)
-            axes[1, 0].tick_params(labelsize=7)
+            axes[1, 0].set_title('Best Raw (single run)', fontsize=10)
+            axes[1, 0].set_xlabel('Gen', fontsize=9)
+            axes[1, 0].set_ylabel('Distance', fontsize=9, color='darkcyan')
+            axes[1, 0].tick_params(labelsize=8, colors='darkcyan')
             axes[1, 0].grid(True, alpha=0.3)
+            add_pipes_axis(axes[1, 0])
 
             # Best Pipes
             axes[1, 1].plot(gens, gen_best_pipes, 'r-', linewidth=2)
-            axes[1, 1].set_title('Best Pipes', fontsize=9)
-            axes[1, 1].set_xlabel('Gen', fontsize=8)
-            axes[1, 1].set_ylabel('Pipes', fontsize=8)
-            axes[1, 1].tick_params(labelsize=7)
+            axes[1, 1].set_title('Best Pipes', fontsize=10)
+            axes[1, 1].set_xlabel('Gen', fontsize=9)
+            axes[1, 1].set_ylabel('Pipes', fontsize=9, color='red')
+            axes[1, 1].tick_params(labelsize=8, colors='red')
             axes[1, 1].grid(True, alpha=0.3)
 
             # Settings subtitle
@@ -1003,21 +1016,32 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             gen_best_pipes = [r['gen_best_pipes'] for r in training_log]
             gen_best_raw = [r['gen_best_raw'] for r in training_log]
 
-            fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+            fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+
+            # Helper to add secondary y-axis showing pipes (distance / PIPE_SPACING)
+            def add_pipes_axis(ax, color='gray'):
+                ax2 = ax.twinx()
+                ymin, ymax = ax.get_ylim()
+                ax2.set_ylim(ymin / PIPE_SPACING, ymax / PIPE_SPACING)
+                ax2.set_ylabel('≈ Pipes', fontsize=9, color=color)
+                ax2.tick_params(colors=color)
+                return ax2
 
             # Settings summary as subtitle
             struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
             settings_text = (f"Pop: {settings['population']} | Mut: {settings['mutation_rate']} | "
                             f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 3-{struct_str}-1 | "
                             f"Runs: {runs_per_bird} | Fitness: {fitness_label}")
-            fig.suptitle(settings_text, fontsize=9, color='gray', y=0.98)
+            fig.suptitle(settings_text, fontsize=10, color='gray', y=0.98)
 
             # Best Fitness (calculated: harm/min/avg/geo)
             axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
             axes[0, 0].set_xlabel('Generation')
-            axes[0, 0].set_ylabel('Fitness')
+            axes[0, 0].set_ylabel('Fitness (dist)', color='blue')
+            axes[0, 0].tick_params(axis='y', colors='blue')
             axes[0, 0].set_title(f'Best Fitness ({fitness_label})')
             axes[0, 0].grid(True, alpha=0.3)
+            add_pipes_axis(axes[0, 0])
 
             # Mean Fitness with std band
             axes[0, 1].plot(gens, mean_fitness, 'g-', linewidth=2, label='Mean')
@@ -1026,22 +1050,27 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 [m + s for m, s in zip(mean_fitness, sigmas)],
                 alpha=0.3, color='green', label='±1 σ')
             axes[0, 1].set_xlabel('Generation')
-            axes[0, 1].set_ylabel('Fitness')
+            axes[0, 1].set_ylabel('Fitness (dist)', color='green')
+            axes[0, 1].tick_params(axis='y', colors='green')
             axes[0, 1].set_title('Mean Fitness ± σ')
             axes[0, 1].legend()
             axes[0, 1].grid(True, alpha=0.3)
+            add_pipes_axis(axes[0, 1])
 
             # Best Raw Distance (single run max)
             axes[1, 0].plot(gens, gen_best_raw, 'c-', linewidth=2)
             axes[1, 0].set_xlabel('Generation')
-            axes[1, 0].set_ylabel('Distance')
+            axes[1, 0].set_ylabel('Distance', color='darkcyan')
+            axes[1, 0].tick_params(axis='y', colors='darkcyan')
             axes[1, 0].set_title('Best Raw Distance (single run)')
             axes[1, 0].grid(True, alpha=0.3)
+            add_pipes_axis(axes[1, 0])
 
             # Best Pipes
             axes[1, 1].plot(gens, gen_best_pipes, 'r-', linewidth=2)
             axes[1, 1].set_xlabel('Generation')
-            axes[1, 1].set_ylabel('Pipes')
+            axes[1, 1].set_ylabel('Pipes', color='red')
+            axes[1, 1].tick_params(axis='y', colors='red')
             axes[1, 1].set_title('Best Pipes')
             axes[1, 1].grid(True, alpha=0.3)
 
@@ -1139,28 +1168,13 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     bird.set_input((closest_pipe_x + 20) - (bird.x + 12), (bird.y + 12) - (closest_pipe_y - 50), bird.birdVelY)
                     if bird.fly_up() and bird.y > 0:
                         bird.birdVelY = FLAP_STRENGTH
-                        bird.birdFlapped = True
 
-                # Check crashes
-                for i, bird in enumerate(birds):
-                    if not crashTest[i][0]:
-                        crashTest[i] = checkCrash({'x': bird.x, 'y': bird.y, 'index': 0}, upperPipes, lowerPipes)
-
-                # Check if all dead
-                all_dead = all(ct[0] for ct in crashTest)
-                if all_dead:
-                    gen_best_pipes = max(gen_best_pipes, score)
-                    gen_best_raw = max(gen_best_raw, max(run_distances))
-                    break
-
-                # Update birds
+                # Update birds (physics - matching gameplay order)
                 for i, bird in enumerate(birds):
                     if not crashTest[i][0]:
                         run_distances[i] += abs(PIPE_SPEED)
-                        if bird.birdVelY < MAX_FALL_SPEED and not bird.birdFlapped:
+                        if bird.birdVelY < MAX_FALL_SPEED:
                             bird.birdVelY += GRAVITY
-                        if bird.birdFlapped:
-                            bird.birdFlapped = False
                         bird.y += bird.birdVelY
 
                 # Move pipes
@@ -1192,6 +1206,18 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                                 if len(upperPipes) > 1:
                                     closest_pipe_x = upperPipes[1]['x']
                                     closest_pipe_y = lowerPipes[1]['y']
+
+                # Check crashes (after physics, matching gameplay order)
+                for i, bird in enumerate(birds):
+                    if not crashTest[i][0]:
+                        crashTest[i] = checkCrash({'x': bird.x, 'y': bird.y, 'index': 0}, upperPipes, lowerPipes)
+
+                # Check if all dead
+                all_dead = all(ct[0] for ct in crashTest)
+                if all_dead:
+                    gen_best_pipes = max(gen_best_pipes, score)
+                    gen_best_raw = max(gen_best_raw, max(run_distances))
+                    break
 
                 # Render every N frames (physics runs every frame regardless)
                 if frame_count % render_skip == 0:
