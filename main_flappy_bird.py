@@ -116,10 +116,13 @@ def scale_to_screen(surface, screen):
 
 
 def get_saved_models():
-    """Return list of saved model files."""
+    """Return list of saved model files, sorted by modification time (newest first)."""
     if not os.path.exists(models_dir):
         return []
-    return [f[:-4] for f in os.listdir(models_dir) if f.endswith('.npz')]
+    files = [f for f in os.listdir(models_dir) if f.endswith('.npz')]
+    # Sort by modification time, newest first
+    files.sort(key=lambda f: os.path.getmtime(os.path.join(models_dir, f)), reverse=True)
+    return [f[:-4] for f in files]
 
 
 def save_model(bird, name, settings=None):
@@ -341,7 +344,8 @@ def model_select_menu(screen, game_surface, font, font_large, mode):
 
 
 def name_model_screen(screen, game_surface, font, font_large, default_name="", graph_surface=None):
-    """Screen to input a name for the model, optionally with graph background."""
+    """Screen to input a name for the model, optionally with graph background.
+    Returns None if user chooses to skip saving."""
     name = default_name
     clock = pygame.time.Clock()
 
@@ -363,7 +367,7 @@ def name_model_screen(screen, game_surface, font, font_large, default_name="", g
                 if event.key == K_RETURN:
                     return name if name else default_name
                 elif event.key == K_ESCAPE:
-                    return default_name  # Use default if cancelled
+                    return None  # Skip saving
                 elif event.key == K_BACKSPACE:
                     name = name[:-1]
                 elif event.unicode.isalnum() or event.unicode in '-_':
@@ -383,7 +387,7 @@ def name_model_screen(screen, game_surface, font, font_large, default_name="", g
             draw_text(screen, 'Enter name:', screen_w // 2, screen_h // 2 - 10, font, (200, 200, 200), center=True)
             display_name = name + '_' if len(name) < 30 else name
             draw_text(screen, display_name, screen_w // 2, screen_h // 2 + 30, font, (255, 255, 0), center=True)
-            draw_text(screen, 'ENTER to save | ESC for default', screen_w // 2, screen_h // 2 + 80, font, (150, 150, 150), center=True)
+            draw_text(screen, 'ENTER to save | ESC to skip', screen_w // 2, screen_h // 2 + 80, font, (150, 150, 150), center=True)
         else:
             # Fallback to game surface background
             game_surface.blit(IMAGES['background'], (0, 0))
@@ -392,7 +396,7 @@ def name_model_screen(screen, game_surface, font, font_large, default_name="", g
             draw_text(game_surface, 'Enter name:', SCREENWIDTH // 2, 150, font, (200, 200, 200), center=True)
             display_name = name + '_' if len(name) < 30 else name
             draw_text(game_surface, display_name, SCREENWIDTH // 2, 190, font, (255, 255, 0), center=True)
-            draw_text(game_surface, 'ENTER to save | ESC for default', SCREENWIDTH // 2, 250, font, (150, 150, 150), center=True)
+            draw_text(game_surface, 'ENTER to save | ESC to skip', SCREENWIDTH // 2, 250, font, (150, 150, 150), center=True)
             screen.blit(scale_to_screen(game_surface, screen), (0, 0))
 
         pygame.display.update()
@@ -928,13 +932,16 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             return ax2
 
         # Best Fitness with min/max run range
-        axes[0, 0].fill_between(gens, winner_min, winner_max, alpha=0.2, color='blue')
-        axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
-        axes[0, 0].set_title(f'Best Fitness ({fitness_label}) ± min/max', fontsize=title_size)
+        axes[0, 0].fill_between(gens, winner_min, winner_max, alpha=0.2, color='blue', label='min/max')
+        latest_fitness = gen_best_fitness[-1] if gen_best_fitness else 0
+        latest_pipes = latest_fitness / PIPE_SPACING
+        axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2, label=f'Fitness: {latest_pipes:.1f} pipes')
+        axes[0, 0].set_title(f'Most Fit Bird ({fitness_label}) ± min/max', fontsize=title_size)
         axes[0, 0].set_xlabel('Gen', fontsize=label_size)
         axes[0, 0].set_ylabel('Fitness (dist)', fontsize=label_size, color='blue')
         axes[0, 0].tick_params(labelsize=tick_size, colors='blue')
         axes[0, 0].grid(True, alpha=0.3)
+        axes[0, 0].legend(loc='upper left', fontsize=tick_size - 1)
         add_pipes_axis(axes[0, 0])
 
         # Mean Fitness with std band
@@ -1060,31 +1067,37 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             graph_surface = pygame.image.load(buf, 'graph.png')
             buf.close()
 
-        # Prompt for model name with graph as background
+        # Prompt for model name with graph as background (None = skip saving)
         default_name = f"gen{generation}_best{int(population.best_ever_distance)}"
         save_name = name_model_screen(screen, game_surface, font, font_large, default_name, graph_surface)
-        save_model(best_bird, save_name, settings)
 
-        # Create outputs directory structure: outputs/YYYY-MM-DD/
-        now = datetime.now()
-        outputs_dir = os.path.join(os.path.dirname(__file__), 'outputs', now.strftime('%Y-%m-%d'))
-        os.makedirs(outputs_dir, exist_ok=True)
-        log_file = os.path.join(outputs_dir, f'{now.strftime("%H%M%S")}_{save_name}.csv')
+        if save_name:
+            save_model(best_bird, save_name, settings)
 
-        # Save CSV log
-        if training_log:
-            with open(log_file, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['generation', 'gen_best_fitness', 'mean_fitness', 'sigma', 'gen_best_pipes', 'gen_best_raw', 'winner_min', 'winner_max'])
-                writer.writeheader()
-                writer.writerows(training_log)
-            print(f"Training log saved to {log_file}")
+            # Create outputs directory structure: outputs/YYYY-MM-DD/
+            now = datetime.now()
+            outputs_dir = os.path.join(os.path.dirname(__file__), 'outputs', now.strftime('%Y-%m-%d'))
+            os.makedirs(outputs_dir, exist_ok=True)
+            log_file = os.path.join(outputs_dir, f'{now.strftime("%H%M%S")}_{save_name}.csv')
 
-            # Save graph file
+            # Save CSV log
+            if training_log:
+                with open(log_file, 'w', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=['generation', 'gen_best_fitness', 'mean_fitness', 'sigma', 'gen_best_pipes', 'gen_best_raw', 'winner_min', 'winner_max'])
+                    writer.writeheader()
+                    writer.writerows(training_log)
+                print(f"Training log saved to {log_file}")
+
+                # Save graph file
+                if fig and plt:
+                    graph_file = log_file.replace('.csv', '.png')
+                    fig.savefig(graph_file, dpi=150)
+                    plt.close(fig)
+                    print(f"Training graphs saved to {graph_file}")
+        else:
+            print("Skipped saving model")
             if fig and plt:
-                graph_file = log_file.replace('.csv', '.png')
-                fig.savefig(graph_file, dpi=150)
                 plt.close(fig)
-                print(f"Training graphs saved to {graph_file}")
 
     # Cache constants locally to avoid global lookups in hot loop
     gravity = GRAVITY
