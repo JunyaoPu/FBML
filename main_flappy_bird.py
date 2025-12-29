@@ -901,6 +901,74 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         live_plt = None
         print("matplotlib not available for live graph")
 
+    def plot_training_graphs(axes, plt_module, title_size=10, label_size=9, tick_size=8):
+        """
+        Populate 2x2 axes with training graphs. SSOT for live and saved graphs.
+        Returns add_pipes_axis helper for caller to use after plotting.
+        """
+        fitness_method = settings.get('fitness_method', 'min')
+        fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
+
+        # Extract data from training_log
+        gens = [r['generation'] for r in training_log]
+        gen_best_fitness = [r['gen_best_fitness'] for r in training_log]
+        mean_fitness = [r['mean_fitness'] for r in training_log]
+        sigmas = [r['sigma'] for r in training_log]
+        gen_best_pipes = [r['gen_best_pipes'] for r in training_log]
+        gen_best_raw = [r['gen_best_raw'] for r in training_log]
+        winner_min = [r['winner_min'] for r in training_log]
+        winner_max = [r['winner_max'] for r in training_log]
+
+        def add_pipes_axis(ax, color='gray', fontsize=None):
+            ax2 = ax.twinx()
+            ymin, ymax = ax.get_ylim()
+            ax2.set_ylim(ymin / PIPE_SPACING, ymax / PIPE_SPACING)
+            ax2.set_ylabel('≈ Pipes', fontsize=fontsize or label_size - 2, color=color)
+            ax2.tick_params(labelsize=tick_size - 2, colors=color)
+            return ax2
+
+        # Best Fitness with min/max run range
+        axes[0, 0].fill_between(gens, winner_min, winner_max, alpha=0.2, color='blue')
+        axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
+        axes[0, 0].set_title(f'Best Fitness ({fitness_label}) ± min/max', fontsize=title_size)
+        axes[0, 0].set_xlabel('Gen', fontsize=label_size)
+        axes[0, 0].set_ylabel('Fitness (dist)', fontsize=label_size, color='blue')
+        axes[0, 0].tick_params(labelsize=tick_size, colors='blue')
+        axes[0, 0].grid(True, alpha=0.3)
+        add_pipes_axis(axes[0, 0])
+
+        # Mean Fitness with std band
+        axes[0, 1].plot(gens, mean_fitness, 'g-', linewidth=2, label='Mean')
+        axes[0, 1].fill_between(gens,
+            [m - s for m, s in zip(mean_fitness, sigmas)],
+            [m + s for m, s in zip(mean_fitness, sigmas)],
+            alpha=0.3, color='green')
+        axes[0, 1].set_title('Mean Fitness ± σ', fontsize=title_size)
+        axes[0, 1].set_xlabel('Gen', fontsize=label_size)
+        axes[0, 1].set_ylabel('Fitness (dist)', fontsize=label_size, color='green')
+        axes[0, 1].tick_params(labelsize=tick_size, colors='green')
+        axes[0, 1].grid(True, alpha=0.3)
+        add_pipes_axis(axes[0, 1])
+
+        # Best Raw Distance (single run max)
+        axes[1, 0].plot(gens, gen_best_raw, 'c-', linewidth=2)
+        axes[1, 0].set_title('Best Raw (single run)', fontsize=title_size)
+        axes[1, 0].set_xlabel('Gen', fontsize=label_size)
+        axes[1, 0].set_ylabel('Distance', fontsize=label_size, color='darkcyan')
+        axes[1, 0].tick_params(labelsize=tick_size, colors='darkcyan')
+        axes[1, 0].grid(True, alpha=0.3)
+        add_pipes_axis(axes[1, 0])
+
+        # Best Pipes
+        axes[1, 1].plot(gens, gen_best_pipes, 'r-', linewidth=2)
+        axes[1, 1].set_title('Best Pipes', fontsize=title_size)
+        axes[1, 1].set_xlabel('Gen', fontsize=label_size)
+        axes[1, 1].set_ylabel('Pipes', fontsize=label_size, color='red')
+        axes[1, 1].tick_params(labelsize=tick_size, colors='red')
+        axes[1, 1].grid(True, alpha=0.3)
+
+        return fitness_label
+
     def update_live_graph():
         """Update the live training graph, render to pygame surface."""
         nonlocal live_graph_surface
@@ -908,67 +976,12 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             return
 
         try:
-            fitness_method = settings.get('fitness_method', 'min')
-            fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
-
-            gens = [r['generation'] for r in training_log]
-            gen_best_fitness = [r['gen_best_fitness'] for r in training_log]
-            mean_fitness = [r['mean_fitness'] for r in training_log]
-            sigmas = [r['sigma'] for r in training_log]
-            gen_best_pipes = [r['gen_best_pipes'] for r in training_log]
-            gen_best_raw = [r['gen_best_raw'] for r in training_log]
-
             # Create figure sized for the graph panel
             dpi = 100
             fig, axes = live_plt.subplots(2, 2, figsize=(GRAPH_WIDTH/dpi, GRAPH_HEIGHT/dpi), dpi=dpi)
 
-            # Helper to add secondary y-axis showing pipes (distance / PIPE_SPACING)
-            def add_pipes_axis(ax, color='gray'):
-                ax2 = ax.twinx()
-                ymin, ymax = ax.get_ylim()
-                ax2.set_ylim(ymin / PIPE_SPACING, ymax / PIPE_SPACING)
-                ax2.set_ylabel('≈ Pipes', fontsize=7, color=color)
-                ax2.tick_params(labelsize=6, colors=color)
-                return ax2
-
-            # Best Fitness (calculated: harm/min/avg/geo)
-            axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
-            axes[0, 0].set_title(f'Best Fitness ({fitness_label})', fontsize=10)
-            axes[0, 0].set_xlabel('Gen', fontsize=9)
-            axes[0, 0].set_ylabel('Fitness (dist)', fontsize=9, color='blue')
-            axes[0, 0].tick_params(labelsize=8, colors='blue')
-            axes[0, 0].grid(True, alpha=0.3)
-            add_pipes_axis(axes[0, 0])
-
-            # Mean Fitness with std
-            axes[0, 1].plot(gens, mean_fitness, 'g-', linewidth=2, label='Mean')
-            axes[0, 1].fill_between(gens,
-                [m - s for m, s in zip(mean_fitness, sigmas)],
-                [m + s for m, s in zip(mean_fitness, sigmas)],
-                alpha=0.3, color='green')
-            axes[0, 1].set_title('Mean Fitness ± σ', fontsize=10)
-            axes[0, 1].set_xlabel('Gen', fontsize=9)
-            axes[0, 1].set_ylabel('Fitness (dist)', fontsize=9, color='green')
-            axes[0, 1].tick_params(labelsize=8, colors='green')
-            axes[0, 1].grid(True, alpha=0.3)
-            add_pipes_axis(axes[0, 1])
-
-            # Best Raw Distance (single run max)
-            axes[1, 0].plot(gens, gen_best_raw, 'c-', linewidth=2)
-            axes[1, 0].set_title('Best Raw (single run)', fontsize=10)
-            axes[1, 0].set_xlabel('Gen', fontsize=9)
-            axes[1, 0].set_ylabel('Distance', fontsize=9, color='darkcyan')
-            axes[1, 0].tick_params(labelsize=8, colors='darkcyan')
-            axes[1, 0].grid(True, alpha=0.3)
-            add_pipes_axis(axes[1, 0])
-
-            # Best Pipes
-            axes[1, 1].plot(gens, gen_best_pipes, 'r-', linewidth=2)
-            axes[1, 1].set_title('Best Pipes', fontsize=10)
-            axes[1, 1].set_xlabel('Gen', fontsize=9)
-            axes[1, 1].set_ylabel('Pipes', fontsize=9, color='red')
-            axes[1, 1].tick_params(labelsize=8, colors='red')
-            axes[1, 1].grid(True, alpha=0.3)
+            # Use shared plotting function (SSOT)
+            fitness_label = plot_training_graphs(axes, live_plt, title_size=10, label_size=9, tick_size=8)
 
             # Settings subtitle
             struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
@@ -1026,26 +1039,10 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 plt = None
 
         if plt and training_log:
-            fitness_method = settings.get('fitness_method', 'min')
-            fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
-
-            gens = [r['generation'] for r in training_log]
-            gen_best_fitness = [r['gen_best_fitness'] for r in training_log]
-            mean_fitness = [r['mean_fitness'] for r in training_log]
-            sigmas = [r['sigma'] for r in training_log]
-            gen_best_pipes = [r['gen_best_pipes'] for r in training_log]
-            gen_best_raw = [r['gen_best_raw'] for r in training_log]
-
             fig, axes = plt.subplots(2, 2, figsize=(14, 9))
 
-            # Helper to add secondary y-axis showing pipes (distance / PIPE_SPACING)
-            def add_pipes_axis(ax, color='gray'):
-                ax2 = ax.twinx()
-                ymin, ymax = ax.get_ylim()
-                ax2.set_ylim(ymin / PIPE_SPACING, ymax / PIPE_SPACING)
-                ax2.set_ylabel('≈ Pipes', fontsize=9, color=color)
-                ax2.tick_params(colors=color)
-                return ax2
+            # Use shared plotting function (SSOT) - larger fonts for saved graph
+            fitness_label = plot_training_graphs(axes, plt, title_size=12, label_size=11, tick_size=10)
 
             # Settings summary as subtitle
             struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
@@ -1053,46 +1050,6 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                             f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 3-{struct_str}-1 | "
                             f"Runs: {runs_per_bird} | Fitness: {fitness_label}")
             fig.suptitle(settings_text, fontsize=10, color='gray', y=0.98)
-
-            # Best Fitness (calculated: harm/min/avg/geo)
-            axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
-            axes[0, 0].set_xlabel('Generation')
-            axes[0, 0].set_ylabel('Fitness (dist)', color='blue')
-            axes[0, 0].tick_params(axis='y', colors='blue')
-            axes[0, 0].set_title(f'Best Fitness ({fitness_label})')
-            axes[0, 0].grid(True, alpha=0.3)
-            add_pipes_axis(axes[0, 0])
-
-            # Mean Fitness with std band
-            axes[0, 1].plot(gens, mean_fitness, 'g-', linewidth=2, label='Mean')
-            axes[0, 1].fill_between(gens,
-                [m - s for m, s in zip(mean_fitness, sigmas)],
-                [m + s for m, s in zip(mean_fitness, sigmas)],
-                alpha=0.3, color='green', label='±1 σ')
-            axes[0, 1].set_xlabel('Generation')
-            axes[0, 1].set_ylabel('Fitness (dist)', color='green')
-            axes[0, 1].tick_params(axis='y', colors='green')
-            axes[0, 1].set_title('Mean Fitness ± σ')
-            axes[0, 1].legend()
-            axes[0, 1].grid(True, alpha=0.3)
-            add_pipes_axis(axes[0, 1])
-
-            # Best Raw Distance (single run max)
-            axes[1, 0].plot(gens, gen_best_raw, 'c-', linewidth=2)
-            axes[1, 0].set_xlabel('Generation')
-            axes[1, 0].set_ylabel('Distance', color='darkcyan')
-            axes[1, 0].tick_params(axis='y', colors='darkcyan')
-            axes[1, 0].set_title('Best Raw Distance (single run)')
-            axes[1, 0].grid(True, alpha=0.3)
-            add_pipes_axis(axes[1, 0])
-
-            # Best Pipes
-            axes[1, 1].plot(gens, gen_best_pipes, 'r-', linewidth=2)
-            axes[1, 1].set_xlabel('Generation')
-            axes[1, 1].set_ylabel('Pipes', color='red')
-            axes[1, 1].tick_params(axis='y', colors='red')
-            axes[1, 1].set_title('Best Pipes')
-            axes[1, 1].grid(True, alpha=0.3)
 
             plt.tight_layout(rect=[0, 0, 1, 0.96])
 
@@ -1117,7 +1074,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         # Save CSV log
         if training_log:
             with open(log_file, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['generation', 'gen_best_fitness', 'mean_fitness', 'sigma', 'gen_best_pipes', 'gen_best_raw'])
+                writer = csv.DictWriter(f, fieldnames=['generation', 'gen_best_fitness', 'mean_fitness', 'sigma', 'gen_best_pipes', 'gen_best_raw', 'winner_min', 'winner_max'])
                 writer.writeheader()
                 writer.writerows(training_log)
             print(f"Training log saved to {log_file}")
@@ -1348,6 +1305,10 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         sigma = (sum((d - mean_fitness) ** 2 for d in fitness_values) / len(fitness_values)) ** 0.5
         gen_best_fitness = birds[0].distance
 
+        # Min/max individual runs for the winning bird (for graph range display)
+        winner_min_run = float(np.min(distances_array[0]))
+        winner_max_run = float(np.max(distances_array[0]))
+
         # Pipes for the best fitness bird this generation
         best_fitness_bird_pipes = cumulative_scores[0] // runs_per_bird
 
@@ -1370,6 +1331,8 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             'sigma': sigma,
             'gen_best_pipes': gen_best_pipes,
             'gen_best_raw': gen_best_raw,
+            'winner_min': winner_min_run,
+            'winner_max': winner_max_run,
         })
 
         # Update live graph
