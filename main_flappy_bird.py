@@ -111,11 +111,29 @@ def get_saved_models():
     return [f[:-4] for f in os.listdir(models_dir) if f.endswith('.npz')]
 
 
-def save_model(bird, name):
-    """Save a bird's weights to file."""
+def save_model(bird, name, settings=None):
+    """Save a bird's weights to file, optionally with training settings."""
+    import json
     filepath = os.path.join(models_dir, f"{name}.npz")
     np.savez(filepath, *bird.tensors)
     print(f"Model saved to {filepath}")
+
+    # Save companion settings file if provided
+    if settings:
+        settings_path = os.path.join(models_dir, f"{name}.json")
+        with open(settings_path, 'w') as f:
+            json.dump(settings, f, indent=2)
+
+
+def load_model_settings(name):
+    """Load training settings for a model, if available."""
+    import json
+    settings_path = os.path.join(models_dir, f"{name}.json")
+    try:
+        with open(settings_path, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
 
 
 def load_model(name):
@@ -223,10 +241,13 @@ def main_menu(screen, game_surface, font, font_large):
 
 
 def delete_model(name):
-    """Delete a saved model."""
+    """Delete a saved model and its settings."""
     filepath = os.path.join(models_dir, f"{name}.npz")
+    settings_path = os.path.join(models_dir, f"{name}.json")
     if os.path.exists(filepath):
         os.remove(filepath)
+    if os.path.exists(settings_path):
+        os.remove(settings_path)
 
 
 def model_select_menu(screen, game_surface, font, font_large, mode):
@@ -288,16 +309,66 @@ def model_select_menu(screen, game_surface, font, font_large, mode):
             prefix = '> ' if idx == selected else '  '
             draw_text(game_surface, prefix + option[:20], SCREENWIDTH // 2, 120 + i * 35, font, color, center=True)
 
-        # Show delete hint when model selected
+        # Show settings for selected model
         if options[selected] not in ['NEW (random weights)', 'BACK']:
-            draw_text(game_surface, '[D] Delete', SCREENWIDTH // 2, SCREENHEIGHT - 60, font, (200, 100, 100), center=True)
+            model_settings = load_model_settings(options[selected])
+            if model_settings:
+                struct = model_settings.get('hidden_structure', [4])
+                struct_str = '-'.join(str(s) for s in struct)
+                fitness = FITNESS_LABELS.get(model_settings.get('fitness_method', '?'), '?')
+                info1 = f"Net: 3-{struct_str}-1 | Pop: {model_settings.get('population', '?')}"
+                info2 = f"Mut: {model_settings.get('mutation_rate', '?')} | Fitness: {fitness}"
+                draw_text(game_surface, info1, SCREENWIDTH // 2, SCREENHEIGHT - 95, font, (180, 180, 180), center=True)
+                draw_text(game_surface, info2, SCREENWIDTH // 2, SCREENHEIGHT - 75, font, (180, 180, 180), center=True)
+            else:
+                draw_text(game_surface, '(no settings saved)', SCREENWIDTH // 2, SCREENHEIGHT - 85, font, (120, 120, 120), center=True)
+            draw_text(game_surface, '[D] Delete', SCREENWIDTH // 2, SCREENHEIGHT - 50, font, (200, 100, 100), center=True)
 
         screen.blit(scale_to_screen(game_surface, screen), (0, 0))
         pygame.display.update()
         clock.tick(60)
 
 
-def train_settings_menu(screen, game_surface, font, font_large):
+def name_model_screen(screen, game_surface, font, font_large, default_name=""):
+    """Screen to input a name for the model."""
+    name = default_name
+    clock = pygame.time.Clock()
+
+    while True:
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == KEYDOWN:
+                if event.key == K_RETURN:
+                    return name if name else default_name
+                elif event.key == K_ESCAPE:
+                    return default_name  # Use default if cancelled
+                elif event.key == K_BACKSPACE:
+                    name = name[:-1]
+                elif event.unicode.isalnum() or event.unicode in '-_':
+                    if len(name) < 30:
+                        name += event.unicode
+
+        # Draw
+        game_surface.blit(IMAGES['background'], (0, 0))
+        game_surface.blit(IMAGES['base'], (0, BASEY))
+
+        draw_text(game_surface, 'SAVE MODEL', SCREENWIDTH // 2, 80, font_large, (255, 255, 255), center=True)
+        draw_text(game_surface, 'Enter name:', SCREENWIDTH // 2, 150, font, (200, 200, 200), center=True)
+
+        # Input box
+        display_name = name + '_' if len(name) < 30 else name
+        draw_text(game_surface, display_name, SCREENWIDTH // 2, 190, font, (255, 255, 0), center=True)
+
+        draw_text(game_surface, 'ENTER to save | ESC for default', SCREENWIDTH // 2, 250, font, (150, 150, 150), center=True)
+
+        screen.blit(scale_to_screen(game_surface, screen), (0, 0))
+        pygame.display.update()
+        clock.tick(60)
+
+
+def train_settings_menu(screen, game_surface, font, font_large, model_name=None):
     """Training parameters menu with text input support."""
     # Load persisted settings
     saved = load_training_settings()
@@ -309,6 +380,18 @@ def train_settings_menu(screen, game_surface, font, font_large):
         'runs_per_bird': str(saved.get('runs_per_bird', 3)),
         'fitness_method': saved.get('fitness_method', 'min'),
     }
+
+    # If loading a model, infer structure from it and lock it
+    structure_locked = False
+    if model_name:
+        try:
+            loaded_model = load_model(model_name)
+            # Infer hidden structure from tensors (exclude input and output layers)
+            inferred_structure = [t.shape[0] for t in loaded_model.tensors[:-1]]
+            settings['hidden_structure'] = inferred_structure
+            structure_locked = True
+        except Exception:
+            pass  # Fall back to editable structure if load fails
 
     # Menu items: (key, label, type)
     # type: 'int_slider', 'float_slider', 'text', 'text_int', 'structure', 'selector'
@@ -398,7 +481,7 @@ def train_settings_menu(screen, game_surface, font, font_large):
                             return STATE_TRAIN, settings
                         elif items[selected][2] in ('text', 'text_int'):
                             editing_text = True
-                        elif items[selected][2] == 'structure':
+                        elif items[selected][2] == 'structure' and not structure_locked:
                             editing_structure = True
                             structure_cursor = 0
                     elif event.key == K_LEFT and selected < len(items):
@@ -439,7 +522,12 @@ def train_settings_menu(screen, game_surface, font, font_large):
 
             if item_type == 'structure':
                 struct = settings['hidden_structure']
-                if editing_structure and is_selected:
+                struct_str = '3-' + '-'.join(str(s) for s in struct) + '-1'
+                if structure_locked:
+                    # Show locked structure (from loaded model)
+                    locked_color = (120, 120, 120) if not is_selected else (180, 180, 100)
+                    draw_text(game_surface, f'{prefix}{label}: {struct_str} (locked)', SCREENWIDTH // 2, y_pos, font, locked_color, center=True)
+                elif editing_structure and is_selected:
                     # Show editable structure
                     struct_str = '3-['
                     for j, s in enumerate(struct):
@@ -454,7 +542,6 @@ def train_settings_menu(screen, game_surface, font, font_large):
                     draw_text(game_surface, 'UP/DOWN:size A:add D:del', SCREENWIDTH // 2, y_pos + 18, font, (150, 150, 150), center=True)
                     y_pos += 20
                 else:
-                    struct_str = '3-' + '-'.join(str(s) for s in struct) + '-1'
                     draw_text(game_surface, f'{prefix}{label}: {struct_str}', SCREENWIDTH // 2, y_pos, font, color, center=True)
 
             elif item_type in ('text', 'text_int'):
@@ -694,7 +781,7 @@ def run_model_game(screen, game_surface, font, model_name):
         clock.tick(60)
 
 
-def train_game(screen, game_surface, font, model_name, settings=None):
+def train_game(screen, game_surface, font, font_large, model_name, settings=None):
     """Training mode with evolution and multi-run evaluation."""
     import csv
     from datetime import datetime
@@ -749,8 +836,11 @@ def train_game(screen, game_surface, font, model_name, settings=None):
         else:
             population.sort()
             best_bird = population.individuals[0]
-        save_name = f"gen{generation}_best{int(population.best_ever_distance)}"
-        save_model(best_bird, save_name)
+
+        # Prompt for model name
+        default_name = f"gen{generation}_best{int(population.best_ever_distance)}"
+        save_name = name_model_screen(screen, game_surface, font, font_large, default_name)
+        save_model(best_bird, save_name, settings)
 
         # Save CSV log
         if training_log:
@@ -771,6 +861,14 @@ def train_game(screen, game_surface, font, model_name, settings=None):
                 best_score = [r['best_score'] for r in training_log]
 
                 fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+
+                # Settings summary as subtitle
+                struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
+                fitness_label = FITNESS_LABELS.get(settings.get('fitness_method', 'min'), 'min')
+                settings_text = (f"Pop: {settings['population']} | Mut: {settings['mutation_rate']} | "
+                                f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 3-{struct_str}-1 | "
+                                f"Runs: {runs_per_bird} | Fitness: {fitness_label}")
+                fig.suptitle(settings_text, fontsize=9, color='gray', y=0.98)
 
                 # Best distance over time
                 axes[0, 0].plot(gens, best_dist, 'b-', linewidth=2)
@@ -805,7 +903,7 @@ def train_game(screen, game_surface, font, model_name, settings=None):
                 axes[1, 1].set_title('Population Diversity (Sigma)')
                 axes[1, 1].grid(True, alpha=0.3)
 
-                plt.tight_layout()
+                plt.tight_layout(rect=[0, 0, 1, 0.96])  # Leave room for suptitle
                 graph_file = log_file.replace('.csv', '.png')
                 plt.savefig(graph_file, dpi=150)
                 plt.close()
@@ -1109,7 +1207,7 @@ def main():
                 model_name = None
 
         elif state == STATE_TRAIN_SETTINGS:
-            state, train_settings = train_settings_menu(screen, game_surface, font, font_large)
+            state, train_settings = train_settings_menu(screen, game_surface, font, font_large, model_name)
             if state == STATE_MENU:
                 model_name = None
                 train_settings = None
@@ -1124,7 +1222,7 @@ def main():
             load_random_sprites()
 
         elif state == STATE_TRAIN:
-            state = train_game(screen, game_surface, font, model_name, train_settings)
+            state = train_game(screen, game_surface, font, font_large, model_name, train_settings)
             model_name = None
             train_settings = None
             load_random_sprites()
