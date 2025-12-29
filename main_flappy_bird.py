@@ -76,6 +76,16 @@ IMAGES, SOUNDS, HITMASKS = {}, {}, {}
 address_assets = 'assets/sprites/'
 models_dir = 'models/'
 
+# Cached image dimensions (set after load_assets())
+PLAYER_WIDTH = 0
+PLAYER_HEIGHT = 0
+PIPE_WIDTH = 0
+PIPE_HEIGHT = 0
+
+# Persistent Rect objects for collision detection (avoids allocation in hot loop)
+_player_rect = None
+_pipe_rects = None
+
 # Ensure models directory exists
 os.makedirs(models_dir, exist_ok=True)
 
@@ -685,14 +695,14 @@ def play_game(screen, game_surface, font):
             lowerPipes.append(newPipe[1])
 
         # Remove off-screen pipe
-        if upperPipes[0]['x'] < -IMAGES['pipe'][0].get_width():
+        if upperPipes[0]['x'] < -PIPE_WIDTH:
             upperPipes.pop(0)
             lowerPipes.pop(0)
 
         # Check score
-        playerMidPos = bird_x + IMAGES['player'][0].get_width() / 2
+        playerMidPos = bird_x + PLAYER_WIDTH / 2
         for pipe in upperPipes:
-            pipeMidPos = pipe['x'] + IMAGES['pipe'][0].get_width() / 2
+            pipeMidPos = pipe['x'] + PIPE_WIDTH / 2
             if pipeMidPos <= playerMidPos < pipeMidPos + 4:
                 score += 1
 
@@ -783,16 +793,16 @@ def run_model_game(screen, game_surface, font, model_name):
             upperPipes.append(newPipe[0])
             lowerPipes.append(newPipe[1])
 
-        if upperPipes[0]['x'] < -IMAGES['pipe'][0].get_width():
+        if upperPipes[0]['x'] < -PIPE_WIDTH:
             upperPipes.pop(0)
             lowerPipes.pop(0)
             closest_pipe_x = upperPipes[0]['x']
             closest_pipe_y = lowerPipes[0]['y']
 
         # Score
-        playerMidPos = bird.x + IMAGES['player'][0].get_width() / 2
+        playerMidPos = bird.x + PLAYER_WIDTH / 2
         for pipe in upperPipes:
-            pipeMidPos = pipe['x'] + IMAGES['pipe'][0].get_width() / 2
+            pipeMidPos = pipe['x'] + PIPE_WIDTH / 2
             if pipeMidPos <= playerMidPos < pipeMidPos + 4:
                 score += 1
                 if len(upperPipes) > 1:
@@ -1127,13 +1137,16 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         gen_best_raw = 0      # Best raw distance (single run) this generation
 
         for run_idx in range(runs_per_bird):
-            # Reset birds for this run
+            # Reset birds for this run - use numpy arrays for vectorized physics
+            num_birds = len(birds)
+            bird_x = np.full(num_birds, SCREENWIDTH * 0.2)
+            bird_y = np.full(num_birds, SCREENHEIGHT / 2.0)
+            bird_vel = np.zeros(num_birds)
+            alive = np.ones(num_birds, dtype=bool)
+
+            # Only reset score (position/velocity now handled by numpy arrays above)
             for bird in birds:
-                bird.x = SCREENWIDTH * 0.2
-                bird.y = SCREENHEIGHT / 2
-                bird.birdVelY = 0
                 bird.score = 0
-                bird.birdFlapped = False
 
             crashTest = [[False, False] for _ in birds]
 
@@ -1155,7 +1168,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             closest_pipe_y = lowerPipes[0]['y']
             score = 0
             frame_count = 0
-            run_distances = [0.0 for _ in birds]
+            run_distances = np.zeros(num_birds)
 
             # Game loop for this run
             while True:
@@ -1173,19 +1186,17 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     save_and_generate_graphs()
                     return STATE_MENU
 
-                # Bird AI decisions
-                for bird in birds:
-                    bird.set_input((closest_pipe_x + 20) - (bird.x + 12), (bird.y + 12) - (closest_pipe_y - 50), bird.birdVelY)
-                    if bird.fly_up() and bird.y > 0:
-                        bird.birdVelY = FLAP_STRENGTH
-
-                # Update birds (physics - matching gameplay order)
+                # Bird AI decisions (still per-bird due to different weights)
                 for i, bird in enumerate(birds):
-                    if not crashTest[i][0]:
-                        run_distances[i] += abs(PIPE_SPEED)
-                        if bird.birdVelY < MAX_FALL_SPEED:
-                            bird.birdVelY += GRAVITY
-                        bird.y += bird.birdVelY
+                    if alive[i]:
+                        bird.set_input((closest_pipe_x + 20) - (bird_x[i] + 12), (bird_y[i] + 12) - (closest_pipe_y - 50), bird_vel[i])
+                        if bird.fly_up() and bird_y[i] > 0:
+                            bird_vel[i] = FLAP_STRENGTH
+
+                # Vectorized physics update
+                bird_vel[alive] = np.minimum(bird_vel[alive] + GRAVITY, MAX_FALL_SPEED)
+                bird_y[alive] += bird_vel[alive]
+                run_distances = np.where(alive, run_distances + abs(PIPE_SPEED), run_distances)
 
                 # Move pipes
                 for uPipe, lPipe in zip(upperPipes, lowerPipes):
@@ -1198,18 +1209,20 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     upperPipes.append(newPipe[0])
                     lowerPipes.append(newPipe[1])
 
-                if upperPipes[0]['x'] < -IMAGES['pipe'][0].get_width():
+                if upperPipes[0]['x'] < -PIPE_WIDTH:
                     upperPipes.pop(0)
                     lowerPipes.pop(0)
                     closest_pipe_x = upperPipes[0]['x']
                     closest_pipe_y = lowerPipes[0]['y']
 
                 # Score check
+                player_mid_offset = PLAYER_WIDTH / 2
+                pipe_mid_offset = PIPE_WIDTH / 2
                 for i, bird in enumerate(birds):
-                    if not crashTest[i][0]:
-                        playerMidPos = bird.x + IMAGES['player'][0].get_width() / 2
+                    if alive[i]:
+                        playerMidPos = bird_x[i] + player_mid_offset
                         for j, pipe in enumerate(upperPipes):
-                            pipeMidPos = pipe['x'] + IMAGES['pipe'][0].get_width() / 2
+                            pipeMidPos = pipe['x'] + pipe_mid_offset
                             if pipeMidPos <= playerMidPos < pipeMidPos + 4:
                                 bird.score += 1
                                 score = max(score, bird.score)
@@ -1218,15 +1231,16 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                                     closest_pipe_y = lowerPipes[1]['y']
 
                 # Check crashes (after physics, matching gameplay order)
-                for i, bird in enumerate(birds):
-                    if not crashTest[i][0]:
-                        crashTest[i] = checkCrash({'x': bird.x, 'y': bird.y, 'index': 0}, upperPipes, lowerPipes)
+                for i in range(num_birds):
+                    if alive[i]:
+                        crashTest[i] = checkCrash({'x': bird_x[i], 'y': bird_y[i], 'index': 0}, upperPipes, lowerPipes)
+                        if crashTest[i][0]:
+                            alive[i] = False
 
                 # Check if all dead
-                all_dead = all(ct[0] for ct in crashTest)
-                if all_dead:
+                if not np.any(alive):
                     gen_best_pipes = max(gen_best_pipes, score)
-                    gen_best_raw = max(gen_best_raw, max(run_distances))
+                    gen_best_raw = max(gen_best_raw, np.max(run_distances))
                     break
 
                 # Render every N frames (physics runs every frame regardless)
@@ -1241,17 +1255,17 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     game_surface.blit(IMAGES['base'], (basex, BASEY))
 
                     # Draw alive birds
-                    for i, bird in enumerate(birds):
-                        if not crashTest[i][0]:
-                            game_surface.blit(IMAGES['player'][1], (bird.x, bird.y))
+                    for i in range(num_birds):
+                        if alive[i]:
+                            game_surface.blit(IMAGES['player'][1], (bird_x[i], bird_y[i]))
 
                     showScore(game_surface, score)
 
                     # Stats
-                    alive = sum(1 for ct in crashTest if not ct[0])
+                    alive_count = np.sum(alive)
                     fitness_label = FITNESS_LABELS.get(settings.get('fitness_method', 'min'), 'Min')
                     draw_text(game_surface, f'Gen: {generation}  Run: {run_idx + 1}/{runs_per_bird}', 5, 5, font, (255, 255, 255))
-                    draw_text(game_surface, f'Alive: {alive}/{len(birds)}', 5, 25, font, (255, 255, 255))
+                    draw_text(game_surface, f'Alive: {alive_count}/{len(birds)}', 5, 25, font, (255, 255, 255))
                     draw_text(game_surface, f'Best Pipes: {best_pipes_ever} | Raw: {best_raw_ever:.0f}', 5, 50, font, (255, 255, 255))
                     draw_text(game_surface, f'Best {fitness_label}: {best_fitness_ever:.0f}', 5, 70, font, (255, 200, 100))
                     draw_text(game_surface, 'ESC: Save & Exit', 5, SCREENHEIGHT - 20, font, (255, 255, 0))
@@ -1362,26 +1376,23 @@ def showScore(surface, score):
 
 def checkCrash(player, upperPipes, lowerPipes):
     """Returns True if player collides with base or pipes."""
-    pw = IMAGES['player'][0].get_width()
-    ph = IMAGES['player'][0].get_height()
-
     # Ground/ceiling collision
-    if player['y'] + ph >= BASEY - 1 or player['y'] < 0:
+    if player['y'] + PLAYER_HEIGHT >= BASEY - 1 or player['y'] < 0:
         return [True, True]
 
-    # Shrink hitbox slightly for more forgiving collisions
+    # Use pre-allocated Rect objects (updated in place)
     margin = 3
-    playerRect = pygame.Rect(player['x'] + margin, player['y'] + margin,
-                              pw - margin * 2, ph - margin * 2)
+    _player_rect.x = player['x'] + margin
+    _player_rect.y = player['y'] + margin
 
-    pipeW = IMAGES['pipe'][0].get_width()
-    pipeH = IMAGES['pipe'][0].get_height()
+    for i, (uPipe, lPipe) in enumerate(zip(upperPipes, lowerPipes)):
+        if i >= len(_pipe_rects):
+            break
+        uRect, lRect = _pipe_rects[i]
+        uRect.x, uRect.y = uPipe['x'], uPipe['y']
+        lRect.x, lRect.y = lPipe['x'], lPipe['y']
 
-    for uPipe, lPipe in zip(upperPipes, lowerPipes):
-        uPipeRect = pygame.Rect(uPipe['x'], uPipe['y'], pipeW, pipeH)
-        lPipeRect = pygame.Rect(lPipe['x'], lPipe['y'], pipeW, pipeH)
-
-        if playerRect.colliderect(uPipeRect) or playerRect.colliderect(lPipeRect):
+        if _player_rect.colliderect(uRect) or _player_rect.colliderect(lRect):
             return [True, False]
 
     return [False, False]
@@ -1413,6 +1424,20 @@ def main():
     # Load assets
     load_assets()
     load_random_sprites()
+
+    # Cache image dimensions for performance
+    global PLAYER_WIDTH, PLAYER_HEIGHT, PIPE_WIDTH, PIPE_HEIGHT
+    global _player_rect, _pipe_rects
+    PLAYER_WIDTH = IMAGES['player'][0].get_width()
+    PLAYER_HEIGHT = IMAGES['player'][0].get_height()
+    PIPE_WIDTH = IMAGES['pipe'][0].get_width()
+    PIPE_HEIGHT = IMAGES['pipe'][0].get_height()
+
+    # Pre-allocate Rect objects for collision detection
+    margin = 3
+    _player_rect = pygame.Rect(0, 0, PLAYER_WIDTH - margin * 2, PLAYER_HEIGHT - margin * 2)
+    _pipe_rects = [(pygame.Rect(0, 0, PIPE_WIDTH, PIPE_HEIGHT),
+                    pygame.Rect(0, 0, PIPE_WIDTH, PIPE_HEIGHT)) for _ in range(4)]
 
     # Game state machine
     state = STATE_MENU

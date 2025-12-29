@@ -4,9 +4,9 @@ import random
 
 
 def clone_weights(parent, child):
-    """Copy parent's weights to child."""
+    """Copy parent's weights to child (in-place to avoid allocation)."""
     for i in range(len(parent.tensors)):
-        child.tensors[i] = parent.tensors[i].copy()
+        np.copyto(child.tensors[i], parent.tensors[i])
     return child
 
 
