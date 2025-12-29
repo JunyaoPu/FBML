@@ -1006,7 +1006,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
         # Prepare best bird for saving
         if population.best_ever_weights is not None:
-            best_bird = BirdNet()
+            best_bird = BirdNet(hidden_structure=settings['hidden_structure'])
             for i, tensor in enumerate(population.best_ever_weights):
                 best_bird.tensors[i] = tensor.copy()
         else:
