@@ -4,3 +4,4 @@
 training_settings.json
 *.csv
 *.png
+.DS_Store
