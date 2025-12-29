@@ -1129,16 +1129,26 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 plt.close(fig)
                 print(f"Training graphs saved to {graph_file}")
 
+    # Cache constants locally to avoid global lookups in hot loop
+    gravity = GRAVITY
+    max_fall = MAX_FALL_SPEED
+    flap_strength = FLAP_STRENGTH
+    pipe_speed = PIPE_SPEED
+    pipe_dist = abs(PIPE_SPEED)
+    player_mid_offset = PLAYER_WIDTH / 2
+    pipe_mid_offset = PIPE_WIDTH / 2
+    basey = BASEY
+    num_birds = len(birds)
+
     while True:  # Generation loop
-        # Multi-run evaluation: track distances per run for each bird
-        all_run_distances = [[] for _ in birds]  # List of lists: bird -> [run1_dist, run2_dist, ...]
-        cumulative_scores = [0 for _ in birds]
+        # Pre-allocate distances array for cache locality
+        distances_array = np.zeros((num_birds, runs_per_bird), dtype=np.float64)
+        cumulative_scores = np.zeros(num_birds, dtype=np.int32)
         gen_best_pipes = 0    # Best pipe count this generation
         gen_best_raw = 0      # Best raw distance (single run) this generation
 
         for run_idx in range(runs_per_bird):
             # Reset birds for this run - use numpy arrays for vectorized physics
-            num_birds = len(birds)
             bird_x = np.full(num_birds, SCREENWIDTH * 0.2)
             bird_y = np.full(num_birds, SCREENHEIGHT / 2.0)
             bird_vel = np.zeros(num_birds)
@@ -1191,18 +1201,18 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     if alive[i]:
                         bird.set_input((closest_pipe_x + 20) - (bird_x[i] + 12), (bird_y[i] + 12) - (closest_pipe_y - 50), bird_vel[i])
                         if bird.fly_up() and bird_y[i] > 0:
-                            bird_vel[i] = FLAP_STRENGTH
+                            bird_vel[i] = flap_strength
 
-                # Vectorized physics update
-                bird_vel[alive] = np.minimum(bird_vel[alive] + GRAVITY, MAX_FALL_SPEED)
+                # Vectorized physics update (using cached locals)
+                bird_vel[alive] = np.minimum(bird_vel[alive] + gravity, max_fall)
                 bird_y[alive] += bird_vel[alive]
-                run_distances = np.where(alive, run_distances + abs(PIPE_SPEED), run_distances)
+                run_distances[alive] += pipe_dist
 
                 # Move pipes
                 for uPipe, lPipe in zip(upperPipes, lowerPipes):
-                    uPipe['x'] += PIPE_SPEED
-                    lPipe['x'] += PIPE_SPEED
-                closest_pipe_x += PIPE_SPEED
+                    uPipe['x'] += pipe_speed
+                    lPipe['x'] += pipe_speed
+                closest_pipe_x += pipe_speed
 
                 if upperPipes[-1]['x'] < SCREENWIDTH - PIPE_SPACING:
                     newPipe = getRandomPipe()
@@ -1215,13 +1225,11 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     closest_pipe_x = upperPipes[0]['x']
                     closest_pipe_y = lowerPipes[0]['y']
 
-                # Score check
-                player_mid_offset = PLAYER_WIDTH / 2
-                pipe_mid_offset = PIPE_WIDTH / 2
+                # Score check (using pre-cached offsets)
                 for i, bird in enumerate(birds):
                     if alive[i]:
                         playerMidPos = bird_x[i] + player_mid_offset
-                        for j, pipe in enumerate(upperPipes):
+                        for pipe in upperPipes:
                             pipeMidPos = pipe['x'] + pipe_mid_offset
                             if pipeMidPos <= playerMidPos < pipeMidPos + 4:
                                 bird.score += 1
@@ -1230,12 +1238,27 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                                     closest_pipe_x = upperPipes[1]['x']
                                     closest_pipe_y = lowerPipes[1]['y']
 
-                # Check crashes (after physics, matching gameplay order)
+                # Check crashes (inline to avoid dict creation)
                 for i in range(num_birds):
                     if alive[i]:
-                        crashTest[i] = checkCrash({'x': bird_x[i], 'y': bird_y[i], 'index': 0}, upperPipes, lowerPipes)
-                        if crashTest[i][0]:
+                        bx, by = bird_x[i], bird_y[i]
+                        # Ground/ceiling collision
+                        if by + PLAYER_HEIGHT >= basey - 1 or by < 0:
                             alive[i] = False
+                            continue
+                        # Pipe collision (using pre-allocated rects)
+                        margin = 3
+                        _player_rect.x = bx + margin
+                        _player_rect.y = by + margin
+                        for idx, (uPipe, lPipe) in enumerate(zip(upperPipes, lowerPipes)):
+                            if idx >= len(_pipe_rects):
+                                break
+                            uRect, lRect = _pipe_rects[idx]
+                            uRect.x, uRect.y = uPipe['x'], uPipe['y']
+                            lRect.x, lRect.y = lPipe['x'], lPipe['y']
+                            if _player_rect.colliderect(uRect) or _player_rect.colliderect(lRect):
+                                alive[i] = False
+                                break
 
                 # Check if all dead
                 if not np.any(alive):
@@ -1262,7 +1285,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     showScore(game_surface, score)
 
                     # Stats
-                    alive_count = np.sum(alive)
+                    alive_count = np.count_nonzero(alive)
                     fitness_label = FITNESS_LABELS.get(settings.get('fitness_method', 'min'), 'Min')
                     draw_text(game_surface, f'Gen: {generation}  Run: {run_idx + 1}/{runs_per_bird}', 5, 5, font, (255, 255, 255))
                     draw_text(game_surface, f'Alive: {alive_count}/{len(birds)}', 5, 25, font, (255, 255, 255))
@@ -1278,14 +1301,13 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     pygame.display.update()
                     clock.tick(60)
 
-            # Store distances from this run
-            for i in range(len(birds)):
-                all_run_distances[i].append(run_distances[i])
-                cumulative_scores[i] += birds[i].score
+            # Store distances directly into pre-allocated array
+            distances_array[:, run_idx] = run_distances
+            for i, bird in enumerate(birds):
+                cumulative_scores[i] += bird.score
 
         # After all runs: calculate fitness based on method (vectorized for Mac Silicon)
         fitness_method = settings.get('fitness_method', 'min')
-        distances_array = np.array(all_run_distances)  # Shape: (num_birds, runs_per_bird)
 
         if fitness_method == 'avg':
             fitness_values = np.mean(distances_array, axis=1)
@@ -1305,14 +1327,14 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         for i, bird in enumerate(birds):
             bird.distance = fitness_values[i]
 
-        # Sort birds and their run distances together by fitness (descending)
-        sorted_pairs = sorted(zip(birds, all_run_distances, cumulative_scores), key=lambda x: x[0].distance, reverse=True)
-        birds[:] = [p[0] for p in sorted_pairs]
-        all_run_distances[:] = [p[1] for p in sorted_pairs]
-        cumulative_scores[:] = [p[2] for p in sorted_pairs]
+        # Sort using numpy argsort (faster than Python sorted with lambda)
+        sorted_indices = np.argsort(-fitness_values)  # Negative for descending
+        birds[:] = [birds[i] for i in sorted_indices]
+        distances_array = distances_array[sorted_indices]
+        cumulative_scores = cumulative_scores[sorted_indices]
 
         # Calculate stats for logging (birds now sorted by fitness, best is index 0)
-        fitness_values = [bird.distance for bird in birds]
+        fitness_values = fitness_values[sorted_indices]
         mean_fitness = sum(fitness_values) / len(fitness_values)
         sigma = (sum((d - mean_fitness) ** 2 for d in fitness_values) / len(fitness_values)) ** 0.5
         gen_best_fitness = birds[0].distance

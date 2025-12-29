@@ -104,5 +104,5 @@ class BirdNet:
 
     def fly_up(self):
         self.process()
-        self.flush_nodes()
+        # Note: flush_nodes() removed - vectors are overwritten by set_input() next frame
         return self.output > 0.5
