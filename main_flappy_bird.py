@@ -1140,6 +1140,13 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
     basey = BASEY
     num_birds = len(birds)
 
+    # Cache image references to avoid dict lookups in render loop
+    bg_img = IMAGES['background']
+    pipe_upper_img = IMAGES['pipe'][0]
+    pipe_lower_img = IMAGES['pipe'][1]
+    base_img = IMAGES['base']
+    player_img = IMAGES['player'][1]
+
     while True:  # Generation loop
         # Pre-allocate distances array for cache locality
         distances_array = np.zeros((num_birds, runs_per_bird), dtype=np.float64)
@@ -1177,12 +1184,12 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             closest_pipe_x = upperPipes[0]['x']
             closest_pipe_y = lowerPipes[0]['y']
             score = 0
-            frame_count = 0
+            render_counter = 0  # Decrementing counter (faster than modulo)
             run_distances = np.zeros(num_birds)
 
             # Game loop for this run
             while True:
-                frame_count += 1
+                render_counter -= 1
                 save_and_exit = False
 
                 for event in pygame.event.get():
@@ -1197,8 +1204,9 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     return STATE_MENU
 
                 # Bird AI decisions (still per-bird due to different weights)
-                for i, bird in enumerate(birds):
+                for i in range(num_birds):
                     if alive[i]:
+                        bird = birds[i]
                         bird.set_input((closest_pipe_x + 20) - (bird_x[i] + 12), (bird_y[i] + 12) - (closest_pipe_y - 50), bird_vel[i])
                         if bird.fly_up() and bird_y[i] > 0:
                             bird_vel[i] = flap_strength
@@ -1208,10 +1216,10 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 bird_y[alive] += bird_vel[alive]
                 run_distances[alive] += pipe_dist
 
-                # Move pipes
-                for uPipe, lPipe in zip(upperPipes, lowerPipes):
-                    uPipe['x'] += pipe_speed
-                    lPipe['x'] += pipe_speed
+                # Move pipes (indexed loop avoids zip() iterator allocation)
+                for j in range(len(upperPipes)):
+                    upperPipes[j]['x'] += pipe_speed
+                    lowerPipes[j]['x'] += pipe_speed
                 closest_pipe_x += pipe_speed
 
                 if upperPipes[-1]['x'] < SCREENWIDTH - PIPE_SPACING:
@@ -1226,14 +1234,14 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     closest_pipe_y = lowerPipes[0]['y']
 
                 # Score check (using pre-cached offsets)
-                for i, bird in enumerate(birds):
+                for i in range(num_birds):
                     if alive[i]:
                         playerMidPos = bird_x[i] + player_mid_offset
                         for pipe in upperPipes:
                             pipeMidPos = pipe['x'] + pipe_mid_offset
                             if pipeMidPos <= playerMidPos < pipeMidPos + 4:
-                                bird.score += 1
-                                score = max(score, bird.score)
+                                birds[i].score += 1
+                                score = max(score, birds[i].score)
                                 if len(upperPipes) > 1:
                                     closest_pipe_x = upperPipes[1]['x']
                                     closest_pipe_y = lowerPipes[1]['y']
@@ -1267,20 +1275,21 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     break
 
                 # Render every N frames (physics runs every frame regardless)
-                if frame_count % render_skip == 0:
+                if render_counter <= 0:
+                    render_counter = render_skip  # Reset counter
                     basex = -((-basex + 20) % baseShift)
-                    game_surface.blit(IMAGES['background'], (0, 0))
+                    game_surface.blit(bg_img, (0, 0))
 
-                    for uPipe, lPipe in zip(upperPipes, lowerPipes):
-                        game_surface.blit(IMAGES['pipe'][0], (uPipe['x'], uPipe['y']))
-                        game_surface.blit(IMAGES['pipe'][1], (lPipe['x'], lPipe['y']))
+                    for j in range(len(upperPipes)):
+                        game_surface.blit(pipe_upper_img, (upperPipes[j]['x'], upperPipes[j]['y']))
+                        game_surface.blit(pipe_lower_img, (lowerPipes[j]['x'], lowerPipes[j]['y']))
 
-                    game_surface.blit(IMAGES['base'], (basex, BASEY))
+                    game_surface.blit(base_img, (basex, BASEY))
 
                     # Draw alive birds
                     for i in range(num_birds):
                         if alive[i]:
-                            game_surface.blit(IMAGES['player'][1], (bird_x[i], bird_y[i]))
+                            game_surface.blit(player_img, (bird_x[i], bird_y[i]))
 
                     showScore(game_surface, score)
 

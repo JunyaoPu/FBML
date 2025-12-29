@@ -5,6 +5,11 @@ epsilon = 0.1
 w_min = -1
 w_max = 1
 
+# Pre-computed reciprocals for faster input normalization (multiplication > division)
+INV_144 = 1.0 / 144.0
+INV_200 = 1.0 / 200.0
+INV_8 = 1.0 / 8.0
+
 def mutGen():
     return np.random.normal(0, epsilon)
 
@@ -51,16 +56,21 @@ class BirdNet:
         for nodes in networkStructure:
             self.vectors.append(np.zeros(shape=(nodes, 1)))
 
+        # Cache for hot path optimization
+        self.num_layers = len(self.vectors)
+
 
 
     def set_input(self, dx, dy, velocity):
         """
             Sets values of input nodes.
         """
-        # Normalize all to symmetric -1 to +1 range
-        self.vectors[0][0] = (dx - 144) / 144.0   # center around 0: -1 to +1
-        self.vectors[0][1] = dy / 200.0           # -1 to +1
-        self.vectors[0][2] = velocity / 8.0       # -1 to +1 (exact range)
+        # Cache vectors[0] to avoid repeated LOAD_ATTR + BINARY_SUBSCR
+        v0 = self.vectors[0]
+        # Normalize all to symmetric -1 to +1 range (using pre-computed reciprocals)
+        v0[0] = (dx - 144) * INV_144   # center around 0: -1 to +1
+        v0[1] = dy * INV_200           # -1 to +1
+        v0[2] = velocity * INV_8       # -1 to +1 (exact range)
 
 
 
@@ -68,12 +78,15 @@ class BirdNet:
         """
             Given input values (nodes (0,1)), this updates the rest of the node values. Returns network output.
         """
-
-        for i in range(len(self.vectors)-1):
-            self.vectors[i + 1] = sigmoid(self.tensors[i].dot(self.vectors[i]))
+        # Cache self.vectors and self.tensors to avoid repeated LOAD_ATTR in loop
+        vectors = self.vectors
+        tensors = self.tensors
+        for i in range(self.num_layers - 1):
+            vectors[i + 1] = sigmoid(tensors[i].dot(vectors[i]))
 
         # Single output: sigmoid gives 0-1, flap if > 0.5
-        self.output = float(self.vectors[-1][0, 0])
+        # .item() is faster than [0,0] indexing (avoids tuple construction)
+        self.output = vectors[-1].item()
 
 
     def flush_nodes(self):

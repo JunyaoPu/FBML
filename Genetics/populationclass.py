@@ -76,7 +76,8 @@ class Population:
         print("Mean: ", average_fitness)
         print("Sigma:", std_fitness)
 
-        [x.flush_distance() for x in self.individuals]
+        for x in self.individuals:
+            x.flush_distance()
 
     def sort(self):
         self.individuals = sorted(self.individuals, key=lambda x: x.distance, reverse=True)
