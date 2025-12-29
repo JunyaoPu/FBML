@@ -28,6 +28,8 @@ class Population:
     def population_divide(self):
         """Separates population into parents and unfit."""
         parent_num = int(self.parent_fraction * len(self.individuals))
+        # Ensure at least 1 parent (needed for breeding)
+        parent_num = max(1, parent_num)
         parents = self.individuals[:parent_num]
         unfit = self.individuals[parent_num:]
         return parents, unfit
@@ -36,6 +38,8 @@ class Population:
         """Clone parents into unfit slots, then mutate.
         Higher-ranked parents are more likely to be selected."""
         num_parents = len(parents)
+        if num_parents == 0 or len(unfit) == 0:
+            return unfit  # Nothing to breed
         # Weights: parent 0 gets num_parents, parent 1 gets num_parents-1, etc.
         weights = [num_parents - i for i in range(num_parents)]
 

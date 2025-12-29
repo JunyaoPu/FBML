@@ -1,6 +1,7 @@
 import random
 import sys
 import os
+import time
 import pygame
 from pygame.locals import *
 import numpy as np
@@ -41,6 +42,7 @@ DEFAULT_SETTINGS = {
     'runs_per_bird': 3,  # Evaluate fitness over N runs
     'fitness_method': 'min',  # How to combine runs: 'avg', 'min', 'geo', 'harm'
     'render_skip': 5,  # Render every N frames (physics runs every frame)
+    'headless': False,  # Disable rendering for maximum speed
 }
 
 FITNESS_METHODS = ['avg', 'min', 'geo', 'harm']
@@ -414,6 +416,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         'runs_per_bird': str(saved.get('runs_per_bird', 3)),
         'fitness_method': saved.get('fitness_method', 'min'),
         'render_skip': str(saved.get('render_skip', 5)),
+        'headless': saved.get('headless', False),
     }
 
     # If loading a model, infer structure from it and lock it
@@ -438,6 +441,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         ('runs_per_bird', 'Runs/Bird', 'text_int'),
         ('fitness_method', 'Fitness', 'selector', FITNESS_METHODS),
         ('render_skip', 'Render Skip', 'text_int'),
+        ('headless', 'Headless', 'toggle'),
     ]
 
     # Hints for each setting
@@ -449,6 +453,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         'runs_per_bird': 'More = reliable fitness, slower',
         'fitness_method': 'min=consistent, avg=overall, geo/harm=balanced',
         'render_skip': 'Higher = faster training (visuals only, physics unchanged)',
+        'headless': 'No visuals = 10-50x faster (status printed to console)',
     }
 
     selected = 0
@@ -549,6 +554,8 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
                             options = item[3]
                             idx = options.index(settings[item[0]])
                             settings[item[0]] = options[(idx - 1) % len(options)]
+                        elif item[2] == 'toggle':
+                            settings[item[0]] = not settings[item[0]]
                     elif event.key == K_RIGHT and selected < len(items):
                         item = items[selected]
                         if item[2] == 'int_slider':
@@ -559,6 +566,8 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
                             options = item[3]
                             idx = options.index(settings[item[0]])
                             settings[item[0]] = options[(idx + 1) % len(options)]
+                        elif item[2] == 'toggle':
+                            settings[item[0]] = not settings[item[0]]
                     elif event.key == K_ESCAPE:
                         return STATE_MENU, None
 
@@ -610,6 +619,12 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
                 val = settings[key]
                 display_val = FITNESS_LABELS.get(val, val)
                 draw_text(game_surface, f'{prefix}{label}: < {display_val} >', SCREENWIDTH // 2, y_pos, font, color, center=True)
+
+            elif item_type == 'toggle':
+                val = settings[key]
+                display_val = 'ON' if val else 'OFF'
+                toggle_color = (100, 255, 100) if val else color
+                draw_text(game_surface, f'{prefix}{label}: < {display_val} >', SCREENWIDTH // 2, y_pos, font, toggle_color if is_selected else color, center=True)
 
             else:  # sliders
                 val = settings[key]
@@ -861,6 +876,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
     runs_per_bird = settings.get('runs_per_bird', 3)
     render_skip = settings.get('render_skip', 5)
+    headless = settings.get('headless', False)
 
     # Initialize population with settings
     population = Population(
@@ -1183,18 +1199,32 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             score = 0
             render_counter = 0  # Decrementing counter (faster than modulo)
             run_distances = np.zeros(num_birds)
+            headless_update_counter = 0  # For periodic status in headless mode
+            headless_last_time = time.time() if headless else 0
 
             # Game loop for this run
             while True:
                 render_counter -= 1
+                headless_update_counter += 1
                 save_and_exit = False
 
-                for event in pygame.event.get():
-                    if event.type == QUIT:
-                        pygame.quit()
-                        sys.exit()
-                    if event.type == KEYDOWN and event.key == K_ESCAPE:
-                        save_and_exit = True
+                # In headless mode, use pump() and only check events every 1000 frames
+                if headless:
+                    if headless_update_counter % 1000 == 0:
+                        pygame.event.pump()  # Prevents OS from thinking app is frozen
+                        for event in pygame.event.get():
+                            if event.type == QUIT:
+                                pygame.quit()
+                                sys.exit()
+                            if event.type == KEYDOWN and event.key == K_ESCAPE:
+                                save_and_exit = True
+                else:
+                    for event in pygame.event.get():
+                        if event.type == QUIT:
+                            pygame.quit()
+                            sys.exit()
+                        if event.type == KEYDOWN and event.key == K_ESCAPE:
+                            save_and_exit = True
 
                 if save_and_exit:
                     save_and_generate_graphs()
@@ -1308,7 +1338,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     break
 
                 # Render every N frames (physics runs every frame regardless)
-                if render_counter <= 0:
+                if not headless and render_counter <= 0:
                     render_counter = render_skip  # Reset counter
                     basex = -((-basex + 20) % baseShift)
                     game_surface.blit(bg_img, (0, 0))
@@ -1343,10 +1373,25 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     pygame.display.update()
                     clock.tick(60)
 
+                # Headless mode: periodic status updates every ~5000 frames
+                if headless and headless_update_counter >= 5000:
+                    now = time.time()
+                    fps = 5000 / (now - headless_last_time) if (now - headless_last_time) > 0 else 0
+                    headless_last_time = now
+                    headless_update_counter = 0
+                    alive_count = np.count_nonzero(alive)
+                    print(f"\rGen {generation} | Run {run_idx + 1}/{runs_per_bird} | Pipes: {score} | Alive: {alive_count}/{num_birds} | {fps:.0f} FPS", end="")
+                    pygame.display.flip()  # Minimal update to keep pygame happy
+
             # Store distances directly into pre-allocated array
             distances_array[:, run_idx] = run_distances
             for i, bird in enumerate(birds):
                 cumulative_scores[i] += bird.score
+
+            # Headless mode: print run progress
+            if headless:
+                best_run_pipes = max(bird.score for bird in birds)
+                print(f"\rGen {generation} | Run {run_idx + 1}/{runs_per_bird} | Pipes: {best_run_pipes} (best: {best_pipes_ever})", end="", flush=True)
 
         # After all runs: calculate fitness based on method (vectorized for Mac Silicon)
         fitness_method = settings.get('fitness_method', 'min')
@@ -1415,6 +1460,9 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         update_live_graph()
 
         fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
+        # Clear line if headless (run progress uses \r), then print gen summary
+        if headless:
+            print("\r" + " " * 80 + "\r", end="")  # Clear the run progress line
         print(f"Gen {generation} | Pipes: {gen_best_pipes} (best: {best_pipes_ever}) | Raw: {gen_best_raw:.0f} (best: {best_raw_ever:.0f}) | {fitness_label}: {gen_best_fitness:.0f} (best: {best_fitness_ever:.0f}) | Mean: {mean_fitness:.0f} | σ: {sigma:.0f}")
 
         # Evolve population and re-stack tensors for batch inference
@@ -1426,6 +1474,15 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
         population.stack_tensors()
         generation += 1
+
+        # Output best bird weights every 10 generations
+        if generation % 10 == 1:  # After gen 10, 20, 30, etc. (generation already incremented)
+            best_bird = population.individuals[0]
+            print(f"\n=== Best Bird Weights (Gen {generation - 1}) ===")
+            for i, tensor in enumerate(best_bird.tensors):
+                print(f"Layer {i} ({tensor.shape[0]}x{tensor.shape[1]}):")
+                print(tensor)
+            print("=" * 40 + "\n")
 
 
 def getRandomPipe():
