@@ -41,6 +41,7 @@ DEFAULT_SETTINGS = {
     'hidden_structure': [4],  # List of hidden layer sizes
     'runs_per_bird': 3,  # Evaluate fitness over N runs
     'fitness_method': 'min',  # How to combine runs: 'avg', 'min', 'geo', 'harm'
+    'render_skip': 5,  # Render every N frames (physics runs every frame)
 }
 
 FITNESS_METHODS = ['avg', 'min', 'geo', 'harm']
@@ -397,6 +398,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         'hidden_structure': saved.get('hidden_structure', [4]),
         'runs_per_bird': str(saved.get('runs_per_bird', 3)),
         'fitness_method': saved.get('fitness_method', 'min'),
+        'render_skip': str(saved.get('render_skip', 5)),
     }
 
     # If loading a model, infer structure from it and lock it
@@ -420,6 +422,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         ('hidden_structure', 'Network', 'structure'),
         ('runs_per_bird', 'Runs/Bird', 'text_int'),
         ('fitness_method', 'Fitness', 'selector', FITNESS_METHODS),
+        ('render_skip', 'Render Skip', 'text_int'),
     ]
 
     # Hints for each setting
@@ -430,6 +433,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         'hidden_structure': 'More nodes = smarter but harder to train',
         'runs_per_bird': 'More = reliable fitness, slower',
         'fitness_method': 'min=consistent, avg=overall, geo/harm=balanced',
+        'render_skip': 'Higher = faster training (visuals only, physics unchanged)',
     }
 
     selected = 0
@@ -504,6 +508,10 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
                                 settings['runs_per_bird'] = max(1, int(settings['runs_per_bird']))
                             except ValueError:
                                 settings['runs_per_bird'] = 3
+                            try:
+                                settings['render_skip'] = max(1, int(settings['render_skip']))
+                            except ValueError:
+                                settings['render_skip'] = 5
                             # Save settings for next time
                             save_training_settings(settings)
                             return STATE_TRAIN, settings
@@ -827,6 +835,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         settings = DEFAULT_SETTINGS.copy()
 
     runs_per_bird = settings.get('runs_per_bird', 3)
+    render_skip = settings.get('render_skip', 5)
 
     # Initialize population with settings
     population = Population(
@@ -1080,8 +1089,8 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                                     closest_pipe_x = upperPipes[1]['x']
                                     closest_pipe_y = lowerPipes[1]['y']
 
-                # Render every N frames
-                if frame_count % RENDER_EVERY == 0:
+                # Render every N frames (physics runs every frame regardless)
+                if frame_count % render_skip == 0:
                     basex = -((-basex + 20) % baseShift)
                     game_surface.blit(IMAGES['background'], (0, 0))
 
@@ -1119,6 +1128,11 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         # After all runs: calculate fitness based on method
         fitness_method = settings.get('fitness_method', 'min')
 
+        # Debug: show first few birds' run distances
+        print(f"\n=== Gen {generation} Debug ===")
+        for i in range(min(3, len(birds))):
+            print(f"Bird {i} runs: {all_run_distances[i]}")
+
         for i, bird in enumerate(birds):
             distances = all_run_distances[i]
             if fitness_method == 'avg':
@@ -1135,6 +1149,10 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 # Harmonic mean: n / (1/d1 + 1/d2 + ... + 1/dn)
                 inv_sum = sum(1.0 / max(d, 1) for d in distances)
                 bird.distance = len(distances) / inv_sum if inv_sum > 0 else 0
+
+        # Debug: show calculated fitness for first few birds
+        for i in range(min(3, len(birds))):
+            print(f"Bird {i} {fitness_method} fitness: {birds[i].distance}")
 
         # Calculate stats for logging
         distances = [bird.distance for bird in birds]
