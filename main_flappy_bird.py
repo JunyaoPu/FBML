@@ -858,13 +858,112 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
     birds = population.individuals
     generation = 1
-    best_score_ever = 0
-    best_score_distance = 0  # Distance when best score was achieved
-    best_fitness_ever = 0
-    best_fitness_score = 0   # Score when best fitness was achieved
+
+    # Tracking best-ever values
+    best_pipes_ever = 0          # Highest pipe count ever achieved
+    best_fitness_ever = 0        # Highest fitness value ever (harm/min/avg/geo)
+    best_fitness_pipes = 0       # Pipe count when best fitness was achieved
+    best_raw_ever = 0            # Highest raw distance in any single run ever
 
     # Training log for graphs
     training_log = []
+
+    # Set up live graph (rendered to pygame surface using Agg backend)
+    live_graph_surface = None
+    GRAPH_WIDTH = 500
+    GRAPH_HEIGHT = SCREENHEIGHT  # Match game height
+
+    # Expand window to fit game + graph side by side
+    training_window_width = SCREENWIDTH + GRAPH_WIDTH
+    screen = pygame.display.set_mode((training_window_width, SCREENHEIGHT), pygame.RESIZABLE)
+    pygame.display.set_caption('FBML Training')
+
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+        import matplotlib.backends.backend_agg as agg
+        live_plt = plt
+    except ImportError:
+        live_plt = None
+        print("matplotlib not available for live graph")
+
+    def update_live_graph():
+        """Update the live training graph, render to pygame surface."""
+        nonlocal live_graph_surface
+        if not live_plt or not training_log:
+            return
+
+        try:
+            fitness_method = settings.get('fitness_method', 'min')
+            fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
+
+            gens = [r['generation'] for r in training_log]
+            gen_best_fitness = [r['gen_best_fitness'] for r in training_log]
+            mean_fitness = [r['mean_fitness'] for r in training_log]
+            sigmas = [r['sigma'] for r in training_log]
+            gen_best_pipes = [r['gen_best_pipes'] for r in training_log]
+            gen_best_raw = [r['gen_best_raw'] for r in training_log]
+
+            # Create figure sized for the graph panel
+            dpi = 100
+            fig, axes = live_plt.subplots(2, 2, figsize=(GRAPH_WIDTH/dpi, GRAPH_HEIGHT/dpi), dpi=dpi)
+
+            # Best Fitness (calculated: harm/min/avg/geo)
+            axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
+            axes[0, 0].set_title(f'Best Fitness ({fitness_label})', fontsize=9)
+            axes[0, 0].set_xlabel('Gen', fontsize=8)
+            axes[0, 0].set_ylabel('Fitness', fontsize=8)
+            axes[0, 0].tick_params(labelsize=7)
+            axes[0, 0].grid(True, alpha=0.3)
+
+            # Mean Fitness with std
+            axes[0, 1].plot(gens, mean_fitness, 'g-', linewidth=2, label='Mean')
+            axes[0, 1].fill_between(gens,
+                [m - s for m, s in zip(mean_fitness, sigmas)],
+                [m + s for m, s in zip(mean_fitness, sigmas)],
+                alpha=0.3, color='green')
+            axes[0, 1].set_title('Mean Fitness ± σ', fontsize=9)
+            axes[0, 1].set_xlabel('Gen', fontsize=8)
+            axes[0, 1].set_ylabel('Fitness', fontsize=8)
+            axes[0, 1].tick_params(labelsize=7)
+            axes[0, 1].grid(True, alpha=0.3)
+
+            # Best Raw Distance (single run max)
+            axes[1, 0].plot(gens, gen_best_raw, 'c-', linewidth=2)
+            axes[1, 0].set_title('Best Raw (single run)', fontsize=9)
+            axes[1, 0].set_xlabel('Gen', fontsize=8)
+            axes[1, 0].set_ylabel('Distance', fontsize=8)
+            axes[1, 0].tick_params(labelsize=7)
+            axes[1, 0].grid(True, alpha=0.3)
+
+            # Best Pipes
+            axes[1, 1].plot(gens, gen_best_pipes, 'r-', linewidth=2)
+            axes[1, 1].set_title('Best Pipes', fontsize=9)
+            axes[1, 1].set_xlabel('Gen', fontsize=8)
+            axes[1, 1].set_ylabel('Pipes', fontsize=8)
+            axes[1, 1].tick_params(labelsize=7)
+            axes[1, 1].grid(True, alpha=0.3)
+
+            # Settings subtitle
+            struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
+            settings_text = (f"Pop:{settings['population']} Mut:{settings['mutation_rate']} "
+                            f"Par:{settings['parent_fraction']*100:.0f}% Net:3-{struct_str}-1 "
+                            f"Runs:{runs_per_bird} Fit:{fitness_label}")
+            fig.suptitle(settings_text, fontsize=7, color='gray', y=0.99)
+
+            fig.tight_layout(rect=[0, 0, 1, 0.97])
+
+            # Render to pygame surface
+            canvas = agg.FigureCanvasAgg(fig)
+            canvas.draw()
+            raw_data = canvas.buffer_rgba()
+            size = canvas.get_width_height()
+            live_graph_surface = pygame.image.frombuffer(raw_data, size, "RGBA")
+
+            live_plt.close(fig)
+        except Exception as e:
+            print(f"Error updating live graph: {e}")
 
     clock = pygame.time.Clock()
 
@@ -894,53 +993,56 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 plt = None
 
         if plt and training_log:
+            fitness_method = settings.get('fitness_method', 'min')
+            fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
+
             gens = [r['generation'] for r in training_log]
-            best_dist = [r['best_distance'] for r in training_log]
-            mean_dist = [r['mean_distance'] for r in training_log]
-            sigma = [r['sigma'] for r in training_log]
-            best_score = [r['best_score'] for r in training_log]
+            gen_best_fitness = [r['gen_best_fitness'] for r in training_log]
+            mean_fitness = [r['mean_fitness'] for r in training_log]
+            sigmas = [r['sigma'] for r in training_log]
+            gen_best_pipes = [r['gen_best_pipes'] for r in training_log]
+            gen_best_raw = [r['gen_best_raw'] for r in training_log]
 
             fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 
             # Settings summary as subtitle
             struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
-            fitness_label = FITNESS_LABELS.get(settings.get('fitness_method', 'min'), 'min')
             settings_text = (f"Pop: {settings['population']} | Mut: {settings['mutation_rate']} | "
                             f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 3-{struct_str}-1 | "
                             f"Runs: {runs_per_bird} | Fitness: {fitness_label}")
             fig.suptitle(settings_text, fontsize=9, color='gray', y=0.98)
 
-            # Best distance over time
-            axes[0, 0].plot(gens, best_dist, 'b-', linewidth=2)
+            # Best Fitness (calculated: harm/min/avg/geo)
+            axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2)
             axes[0, 0].set_xlabel('Generation')
-            axes[0, 0].set_ylabel('Distance')
-            axes[0, 0].set_title('Best Distance per Generation')
+            axes[0, 0].set_ylabel('Fitness')
+            axes[0, 0].set_title(f'Best Fitness ({fitness_label})')
             axes[0, 0].grid(True, alpha=0.3)
 
-            # Mean distance with std band
-            axes[0, 1].plot(gens, mean_dist, 'g-', linewidth=2, label='Mean')
+            # Mean Fitness with std band
+            axes[0, 1].plot(gens, mean_fitness, 'g-', linewidth=2, label='Mean')
             axes[0, 1].fill_between(gens,
-                [m - s for m, s in zip(mean_dist, sigma)],
-                [m + s for m, s in zip(mean_dist, sigma)],
-                alpha=0.3, color='green', label='±1 Sigma')
+                [m - s for m, s in zip(mean_fitness, sigmas)],
+                [m + s for m, s in zip(mean_fitness, sigmas)],
+                alpha=0.3, color='green', label='±1 σ')
             axes[0, 1].set_xlabel('Generation')
-            axes[0, 1].set_ylabel('Distance')
-            axes[0, 1].set_title('Mean Distance ± Sigma')
+            axes[0, 1].set_ylabel('Fitness')
+            axes[0, 1].set_title('Mean Fitness ± σ')
             axes[0, 1].legend()
             axes[0, 1].grid(True, alpha=0.3)
 
-            # Best score (pipes passed)
-            axes[1, 0].plot(gens, best_score, 'r-', linewidth=2)
+            # Best Raw Distance (single run max)
+            axes[1, 0].plot(gens, gen_best_raw, 'c-', linewidth=2)
             axes[1, 0].set_xlabel('Generation')
-            axes[1, 0].set_ylabel('Score (Pipes)')
-            axes[1, 0].set_title('Best Score per Generation')
+            axes[1, 0].set_ylabel('Distance')
+            axes[1, 0].set_title('Best Raw Distance (single run)')
             axes[1, 0].grid(True, alpha=0.3)
 
-            # Sigma (diversity)
-            axes[1, 1].plot(gens, sigma, 'm-', linewidth=2)
+            # Best Pipes
+            axes[1, 1].plot(gens, gen_best_pipes, 'r-', linewidth=2)
             axes[1, 1].set_xlabel('Generation')
-            axes[1, 1].set_ylabel('Sigma')
-            axes[1, 1].set_title('Population Diversity (Sigma)')
+            axes[1, 1].set_ylabel('Pipes')
+            axes[1, 1].set_title('Best Pipes')
             axes[1, 1].grid(True, alpha=0.3)
 
             plt.tight_layout(rect=[0, 0, 1, 0.96])
@@ -966,7 +1068,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         # Save CSV log
         if training_log:
             with open(log_file, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=['generation', 'best_distance', 'mean_distance', 'sigma', 'best_score'])
+                writer = csv.DictWriter(f, fieldnames=['generation', 'gen_best_fitness', 'mean_fitness', 'sigma', 'gen_best_pipes', 'gen_best_raw'])
                 writer.writeheader()
                 writer.writerows(training_log)
             print(f"Training log saved to {log_file}")
@@ -982,7 +1084,8 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         # Multi-run evaluation: track distances per run for each bird
         all_run_distances = [[] for _ in birds]  # List of lists: bird -> [run1_dist, run2_dist, ...]
         cumulative_scores = [0 for _ in birds]
-        gen_best_score = 0
+        gen_best_pipes = 0    # Best pipe count this generation
+        gen_best_raw = 0      # Best raw distance (single run) this generation
 
         for run_idx in range(runs_per_bird):
             # Reset birds for this run
@@ -1046,7 +1149,8 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 # Check if all dead
                 all_dead = all(ct[0] for ct in crashTest)
                 if all_dead:
-                    gen_best_score = max(gen_best_score, score)
+                    gen_best_pipes = max(gen_best_pipes, score)
+                    gen_best_raw = max(gen_best_raw, max(run_distances))
                     break
 
                 # Update birds
@@ -1112,11 +1216,15 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     fitness_label = FITNESS_LABELS.get(settings.get('fitness_method', 'min'), 'Min')
                     draw_text(game_surface, f'Gen: {generation}  Run: {run_idx + 1}/{runs_per_bird}', 5, 5, font, (255, 255, 255))
                     draw_text(game_surface, f'Alive: {alive}/{len(birds)}', 5, 25, font, (255, 255, 255))
-                    draw_text(game_surface, f'Best Score: {best_score_ever} ({best_score_distance:.0f} dist)', 5, 50, font, (255, 255, 255))
-                    draw_text(game_surface, f'Best {fitness_label}: {best_fitness_ever:.0f} ({best_fitness_score} pipes)', 5, 70, font, (255, 200, 100))
+                    draw_text(game_surface, f'Best Pipes: {best_pipes_ever} | Raw: {best_raw_ever:.0f}', 5, 50, font, (255, 255, 255))
+                    draw_text(game_surface, f'Best {fitness_label}: {best_fitness_ever:.0f}', 5, 70, font, (255, 200, 100))
                     draw_text(game_surface, 'ESC: Save & Exit', 5, SCREENHEIGHT - 20, font, (255, 255, 0))
 
-                    screen.blit(scale_to_screen(game_surface, screen), (0, 0))
+                    # Blit game to left side, graph to right side
+                    screen.fill((30, 30, 30))  # Dark background for graph area
+                    screen.blit(game_surface, (0, 0))
+                    if live_graph_surface:
+                        screen.blit(live_graph_surface, (SCREENWIDTH, 0))
                     pygame.display.update()
                     clock.tick(60)
 
@@ -1127,11 +1235,6 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
         # After all runs: calculate fitness based on method
         fitness_method = settings.get('fitness_method', 'min')
-
-        # Debug: show first few birds' run distances
-        print(f"\n=== Gen {generation} Debug ===")
-        for i in range(min(3, len(birds))):
-            print(f"Bird {i} runs: {all_run_distances[i]}")
 
         for i, bird in enumerate(birds):
             distances = all_run_distances[i]
@@ -1150,41 +1253,47 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 inv_sum = sum(1.0 / max(d, 1) for d in distances)
                 bird.distance = len(distances) / inv_sum if inv_sum > 0 else 0
 
-        # Debug: show calculated fitness for first few birds
-        for i in range(min(3, len(birds))):
-            print(f"Bird {i} {fitness_method} fitness: {birds[i].distance}")
+        # Sort birds and their run distances together by fitness (descending)
+        sorted_pairs = sorted(zip(birds, all_run_distances, cumulative_scores), key=lambda x: x[0].distance, reverse=True)
+        birds[:] = [p[0] for p in sorted_pairs]
+        all_run_distances[:] = [p[1] for p in sorted_pairs]
+        cumulative_scores[:] = [p[2] for p in sorted_pairs]
 
-        # Calculate stats for logging
-        distances = [bird.distance for bird in birds]
-        mean_dist = sum(distances) / len(distances)
-        sigma = (sum((d - mean_dist) ** 2 for d in distances) / len(distances)) ** 0.5
-        best_dist = max(distances)
+        # Calculate stats for logging (birds now sorted by fitness, best is index 0)
+        fitness_values = [bird.distance for bird in birds]
+        mean_fitness = sum(fitness_values) / len(fitness_values)
+        sigma = (sum((d - mean_fitness) ** 2 for d in fitness_values) / len(fitness_values)) ** 0.5
+        gen_best_fitness = birds[0].distance
 
-        # Find best bird this generation (by fitness)
-        best_bird_idx = distances.index(best_dist)
-        best_bird_score = max(cumulative_scores[best_bird_idx] // runs_per_bird, gen_best_score)
+        # Pipes for the best fitness bird this generation
+        best_fitness_bird_pipes = cumulative_scores[0] // runs_per_bird
 
-        # Update bests
-        if gen_best_score > best_score_ever:
-            best_score_ever = gen_best_score
-            # Find the bird that got this score and get their fitness
-            best_score_distance = best_dist  # Approximate with best fitness bird
+        # Update best-ever tracking
+        if gen_best_pipes > best_pipes_ever:
+            best_pipes_ever = gen_best_pipes
 
-        if best_dist > best_fitness_ever:
-            best_fitness_ever = best_dist
-            best_fitness_score = best_bird_score
+        if gen_best_raw > best_raw_ever:
+            best_raw_ever = gen_best_raw
+
+        if gen_best_fitness > best_fitness_ever:
+            best_fitness_ever = gen_best_fitness
+            best_fitness_pipes = best_fitness_bird_pipes
 
         # Log this generation
         training_log.append({
             'generation': generation,
-            'best_distance': best_dist,
-            'mean_distance': mean_dist,
+            'gen_best_fitness': gen_best_fitness,
+            'mean_fitness': mean_fitness,
             'sigma': sigma,
-            'best_score': gen_best_score,
+            'gen_best_pipes': gen_best_pipes,
+            'gen_best_raw': gen_best_raw,
         })
 
+        # Update live graph
+        update_live_graph()
+
         fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
-        print(f"Gen {generation} | Score: {gen_best_score} | Best: {best_score_ever} pipes/{best_score_distance:.0f} dist | {fitness_label}: {best_fitness_ever:.0f} dist/{best_fitness_score} pipes | Mean: {mean_dist:.0f} | σ: {sigma:.0f}")
+        print(f"Gen {generation} | Pipes: {gen_best_pipes} (best: {best_pipes_ever}) | Raw: {gen_best_raw:.0f} (best: {best_raw_ever:.0f}) | {fitness_label}: {gen_best_fitness:.0f} (best: {best_fitness_ever:.0f}) | Mean: {mean_fitness:.0f} | σ: {sigma:.0f}")
 
         # Evolve population
         population.evolve()
