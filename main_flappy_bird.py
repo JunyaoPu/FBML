@@ -1,4 +1,3 @@
-from itertools import cycle
 import random
 import sys
 import os
@@ -330,7 +329,7 @@ def model_select_menu(screen, game_surface, font, font_large, mode):
                 struct = model_settings.get('hidden_structure', [4])
                 struct_str = '-'.join(str(s) for s in struct)
                 fitness = FITNESS_LABELS.get(model_settings.get('fitness_method', '?'), '?')
-                info1 = f"Net: 3-{struct_str}-1 | Pop: {model_settings.get('population', '?')}"
+                info1 = f"Net: 5-{struct_str}-1 | Pop: {model_settings.get('population', '?')}"
                 info2 = f"Mut: {model_settings.get('mutation_rate', '?')} | Fitness: {fitness}"
                 draw_text(game_surface, info1, SCREENWIDTH // 2, SCREENHEIGHT - 95, font, (180, 180, 180), center=True)
                 draw_text(game_surface, info2, SCREENWIDTH // 2, SCREENHEIGHT - 75, font, (180, 180, 180), center=True)
@@ -410,7 +409,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
     settings = {
         'population': str(saved.get('population', 50)),
         'mutation_rate': str(saved.get('mutation_rate', 0.1)),
-        'parent_fraction': saved.get('parent_fraction', 0.3),
+        'parent_fraction': str(saved.get('parent_fraction', 0.3)),
         'hidden_structure': saved.get('hidden_structure', [4]),
         'runs_per_bird': str(saved.get('runs_per_bird', 3)),
         'fitness_method': saved.get('fitness_method', 'min'),
@@ -434,7 +433,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
     items = [
         ('population', 'Population', 'text_int'),
         ('mutation_rate', 'Mutation Rate', 'text'),
-        ('parent_fraction', 'Parent %', 'float_slider', 0.1, 0.9, 0.1),
+        ('parent_fraction', 'Parent %', 'text'),
         ('hidden_structure', 'Network', 'structure'),
         ('runs_per_bird', 'Runs/Bird', 'text_int'),
         ('fitness_method', 'Fitness', 'selector', FITNESS_METHODS),
@@ -517,6 +516,10 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
                             except ValueError:
                                 settings['mutation_rate'] = 0.1
                             try:
+                                settings['parent_fraction'] = max(0.01, min(0.99, float(settings['parent_fraction'])))
+                            except ValueError:
+                                settings['parent_fraction'] = 0.3
+                            try:
                                 settings['population'] = max(10, int(settings['population']))
                             except ValueError:
                                 settings['population'] = 50
@@ -574,7 +577,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
 
             if item_type == 'structure':
                 struct = settings['hidden_structure']
-                struct_str = '3-' + '-'.join(str(s) for s in struct) + '-1'
+                struct_str = '5-' + '-'.join(str(s) for s in struct) + '-1'
                 if structure_locked:
                     # Show locked structure (from loaded model)
                     locked_color = (120, 120, 120) if not is_selected else (180, 180, 100)
@@ -762,9 +765,6 @@ def run_model_game(screen, game_surface, font, model_name):
         {'x': SCREENWIDTH + 200 + PIPE_SPACING, 'y': newPipe2[1]['y']},
     ]
 
-    closest_pipe_x = upperPipes[0]['x']
-    closest_pipe_y = lowerPipes[0]['y']
-
     score = 0
     clock = pygame.time.Clock()
 
@@ -776,8 +776,23 @@ def run_model_game(screen, game_surface, font, model_name):
             if event.type == KEYDOWN and event.key == K_ESCAPE:
                 return STATE_MENU
 
-        # AI decision
-        bird.set_input((closest_pipe_x + 20) - (bird.x + 12), (bird.y + 12) - (closest_pipe_y - 50), bird.birdVelY)
+        # AI decision - both pipes visible (5 inputs)
+        pipe1_x = upperPipes[0]['x']
+        pipe1_gap_y = lowerPipes[0]['y']
+        dx1 = (pipe1_x + 20) - (bird.x + 12)
+        dy1 = (bird.y + 12) - (pipe1_gap_y - 50)
+
+        if len(upperPipes) > 1:
+            pipe2_x = upperPipes[1]['x']
+            pipe2_gap_y = lowerPipes[1]['y']
+        else:
+            pipe2_x = pipe1_x + PIPE_SPACING
+            pipe2_gap_y = pipe1_gap_y
+
+        dx2 = (pipe2_x + 20) - (bird.x + 12)
+        dy2 = (bird.y + 12) - (pipe2_gap_y - 50)
+
+        bird.set_input(dx1, dy1, dx2, dy2, bird.birdVelY)
         if bird.fly_up() and bird.y > 0:
             bird.birdVelY = FLAP_STRENGTH
 
@@ -790,7 +805,6 @@ def run_model_game(screen, game_surface, font, model_name):
         for uPipe, lPipe in zip(upperPipes, lowerPipes):
             uPipe['x'] += PIPE_SPEED
             lPipe['x'] += PIPE_SPEED
-        closest_pipe_x += PIPE_SPEED
 
         if upperPipes[-1]['x'] < SCREENWIDTH - PIPE_SPACING:
             newPipe = getRandomPipe()
@@ -800,8 +814,6 @@ def run_model_game(screen, game_surface, font, model_name):
         if upperPipes[0]['x'] < -PIPE_WIDTH:
             upperPipes.pop(0)
             lowerPipes.pop(0)
-            closest_pipe_x = upperPipes[0]['x']
-            closest_pipe_y = lowerPipes[0]['y']
 
         # Score
         playerMidPos = bird.x + PLAYER_WIDTH / 2
@@ -809,9 +821,6 @@ def run_model_game(screen, game_surface, font, model_name):
             pipeMidPos = pipe['x'] + PIPE_WIDTH / 2
             if pipeMidPos <= playerMidPos < pipeMidPos + 4:
                 score += 1
-                if len(upperPipes) > 1:
-                    closest_pipe_x = upperPipes[1]['x']
-                    closest_pipe_y = lowerPipes[1]['y']
 
         # Crash
         crash = checkCrash({'x': bird.x, 'y': bird.y, 'index': 0}, upperPipes, lowerPipes)
@@ -872,6 +881,9 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         # Initialize best_ever with loaded model as baseline
         population.best_ever_weights = [t.copy() for t in template.tensors]
 
+    # Stack tensors for batch inference (must be called after any weight modifications)
+    population.stack_tensors()
+
     birds = population.individuals
     generation = 1
 
@@ -883,6 +895,18 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
     # Training log for graphs
     training_log = []
+
+    # Diagnostic log for failure analysis
+    now = datetime.now()
+    diag_outputs_dir = os.path.join(os.path.dirname(__file__), 'outputs', now.strftime('%Y-%m-%d'))
+    os.makedirs(diag_outputs_dir, exist_ok=True)
+    diag_log_path = os.path.join(diag_outputs_dir, f'{now.strftime("%H%M%S")}_diagnostic.log')
+    diag_log = open(diag_log_path, 'w')
+    diag_log.write(f"Diagnostic log started at {now.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    diag_log.write(f"Settings: pop={settings['population']}, mut={settings['mutation_rate']}, "
+                   f"parent={settings['parent_fraction']}, net=5-{'-'.join(str(s) for s in settings['hidden_structure'])}-1, "
+                   f"runs={runs_per_bird}, fitness={settings.get('fitness_method', 'min')}\n\n")
+    diag_log.flush()
 
     # Set up live graph (rendered to pygame surface using Agg backend)
     live_graph_surface = None
@@ -932,7 +956,10 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             return ax2
 
         # Best Fitness with min/max run range
-        axes[0, 0].fill_between(gens, winner_min, winner_max, alpha=0.2, color='blue', label='min/max')
+        latest_min = winner_min[-1] / PIPE_SPACING if winner_min else 0
+        latest_max = winner_max[-1] / PIPE_SPACING if winner_max else 0
+        axes[0, 0].fill_between(gens, winner_min, winner_max, alpha=0.2, color='blue',
+                                 label=f'min/max: {latest_min:.1f}/{latest_max:.1f}')
         latest_fitness = gen_best_fitness[-1] if gen_best_fitness else 0
         latest_pipes = latest_fitness / PIPE_SPACING
         axes[0, 0].plot(gens, gen_best_fitness, 'b-', linewidth=2, label=f'Fitness: {latest_pipes:.1f} pipes')
@@ -993,7 +1020,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             # Settings subtitle
             struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
             settings_text = (f"Pop:{settings['population']} Mut:{settings['mutation_rate']} "
-                            f"Par:{settings['parent_fraction']*100:.0f}% Net:3-{struct_str}-1 "
+                            f"Par:{settings['parent_fraction']*100:.0f}% Net:5-{struct_str}-1 "
                             f"Runs:{runs_per_bird} Fit:{fitness_label}")
             fig.suptitle(settings_text, fontsize=7, color='gray', y=0.99)
 
@@ -1054,7 +1081,7 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             # Settings summary as subtitle
             struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
             settings_text = (f"Pop: {settings['population']} | Mut: {settings['mutation_rate']} | "
-                            f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 3-{struct_str}-1 | "
+                            f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 5-{struct_str}-1 | "
                             f"Runs: {runs_per_bird} | Fitness: {fitness_label}")
             fig.suptitle(settings_text, fontsize=10, color='gray', y=0.98)
 
@@ -1099,6 +1126,10 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             if fig and plt:
                 plt.close(fig)
 
+        # Close diagnostic log
+        diag_log.close()
+        print(f"Diagnostic log saved to {diag_log_path}")
+
     # Cache constants locally to avoid global lookups in hot loop
     gravity = GRAVITY
     max_fall = MAX_FALL_SPEED
@@ -1135,8 +1166,6 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             for bird in birds:
                 bird.score = 0
 
-            crashTest = [[False, False] for _ in birds]
-
             basex = 0
             baseShift = IMAGES['base'].get_width() - SCREENWIDTH
 
@@ -1151,8 +1180,6 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 {'x': SCREENWIDTH + 200 + PIPE_SPACING, 'y': newPipe2[1]['y']},
             ]
 
-            closest_pipe_x = upperPipes[0]['x']
-            closest_pipe_y = lowerPipes[0]['y']
             score = 0
             render_counter = 0  # Decrementing counter (faster than modulo)
             run_distances = np.zeros(num_birds)
@@ -1173,13 +1200,28 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                     save_and_generate_graphs()
                     return STATE_MENU
 
-                # Bird AI decisions (still per-bird due to different weights)
-                for i in range(num_birds):
-                    if alive[i]:
-                        bird = birds[i]
-                        bird.set_input((closest_pipe_x + 20) - (bird_x[i] + 12), (bird_y[i] + 12) - (closest_pipe_y - 50), bird_vel[i])
-                        if bird.fly_up() and bird_y[i] > 0:
-                            bird_vel[i] = flap_strength
+                # Batched AI decisions - both pipes visible (5 inputs)
+                # First pipe (always exists)
+                pipe1_x = upperPipes[0]['x']
+                pipe1_gap_y = lowerPipes[0]['y']
+                dx1 = (pipe1_x + 20) - (bird_x + 12)
+                dy1 = (bird_y + 12) - (pipe1_gap_y - 50)
+
+                # Second pipe (if exists, else extrapolate from first)
+                if len(upperPipes) > 1:
+                    pipe2_x = upperPipes[1]['x']
+                    pipe2_gap_y = lowerPipes[1]['y']
+                else:
+                    pipe2_x = pipe1_x + PIPE_SPACING
+                    pipe2_gap_y = pipe1_gap_y
+
+                dx2 = (pipe2_x + 20) - (bird_x + 12)
+                dy2 = (bird_y + 12) - (pipe2_gap_y - 50)
+
+                should_flap = population.batch_forward(dx1, dy1, dx2, dy2, bird_vel, alive)
+                # Apply flaps (only for birds above y=0)
+                flap_mask = should_flap & (bird_y > 0)
+                bird_vel[flap_mask] = flap_strength
 
                 # Vectorized physics update (using cached locals)
                 bird_vel[alive] = np.minimum(bird_vel[alive] + gravity, max_fall)
@@ -1190,7 +1232,6 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 for j in range(len(upperPipes)):
                     upperPipes[j]['x'] += pipe_speed
                     lowerPipes[j]['x'] += pipe_speed
-                closest_pipe_x += pipe_speed
 
                 if upperPipes[-1]['x'] < SCREENWIDTH - PIPE_SPACING:
                     newPipe = getRandomPipe()
@@ -1200,43 +1241,65 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 if upperPipes[0]['x'] < -PIPE_WIDTH:
                     upperPipes.pop(0)
                     lowerPipes.pop(0)
-                    closest_pipe_x = upperPipes[0]['x']
-                    closest_pipe_y = lowerPipes[0]['y']
 
-                # Score check (using pre-cached offsets)
-                for i in range(num_birds):
-                    if alive[i]:
-                        playerMidPos = bird_x[i] + player_mid_offset
-                        for pipe in upperPipes:
-                            pipeMidPos = pipe['x'] + pipe_mid_offset
-                            if pipeMidPos <= playerMidPos < pipeMidPos + 4:
-                                birds[i].score += 1
-                                score = max(score, birds[i].score)
-                                if len(upperPipes) > 1:
-                                    closest_pipe_x = upperPipes[1]['x']
-                                    closest_pipe_y = lowerPipes[1]['y']
+                # Vectorized score check
+                # Compute pipe midpoints (typically only first pipe matters due to spacing)
+                pipe_mids = np.array([p['x'] + pipe_mid_offset for p in upperPipes])
+                player_mids = bird_x + player_mid_offset
 
-                # Check crashes (inline to avoid dict creation)
-                for i in range(num_birds):
-                    if alive[i]:
-                        bx, by = bird_x[i], bird_y[i]
-                        # Ground/ceiling collision
-                        if by + PLAYER_HEIGHT >= basey - 1 or by < 0:
-                            alive[i] = False
-                            continue
-                        # Pipe collision (using pre-allocated rects)
-                        margin = 3
-                        _player_rect.x = bx + margin
-                        _player_rect.y = by + margin
-                        for idx, (uPipe, lPipe) in enumerate(zip(upperPipes, lowerPipes)):
-                            if idx >= len(_pipe_rects):
-                                break
-                            uRect, lRect = _pipe_rects[idx]
-                            uRect.x, uRect.y = uPipe['x'], uPipe['y']
-                            lRect.x, lRect.y = lPipe['x'], lPipe['y']
-                            if _player_rect.colliderect(uRect) or _player_rect.colliderect(lRect):
-                                alive[i] = False
-                                break
+                # Check scoring zone: pipeMid <= playerMid < pipeMid + 4
+                # Broadcasting: (num_birds,) vs (num_pipes,) -> (num_birds, num_pipes)
+                in_score_zone = (pipe_mids <= player_mids[:, None]) & (player_mids[:, None] < pipe_mids + 4)
+                # Only alive birds can score
+                in_score_zone &= alive[:, None]
+
+                # Any bird in scoring zone for any pipe?
+                scored_birds = in_score_zone.any(axis=1)
+                if np.any(scored_birds):
+                    # Update individual bird scores (unavoidable per-bird update)
+                    scored_indices = np.where(scored_birds)[0]
+                    for i in scored_indices:
+                        birds[i].score += 1
+                    # Update global score (all scoring birds have same score if they stayed alive)
+                    score = max(score, max(birds[i].score for i in scored_indices))
+
+                # Vectorized collision detection
+                # Ground/ceiling collision (single numpy operation for all birds)
+                ground_ceiling_dead = (bird_y + PLAYER_HEIGHT >= basey - 1) | (bird_y < 0)
+                alive &= ~ground_ceiling_dead
+
+                # Pipe collision (vectorized AABB)
+                # Player hitbox has 3px margin on each side
+                margin = 3
+                player_left = bird_x + margin
+                player_right = bird_x + PLAYER_WIDTH - margin
+                player_top = bird_y + margin
+                player_bottom = bird_y + PLAYER_HEIGHT - margin
+
+                # Extract pipe positions to numpy arrays (typically 2-4 pipes)
+                num_pipes = len(upperPipes)
+                pipe_x = np.array([p['x'] for p in upperPipes])
+                upper_pipe_y = np.array([p['y'] for p in upperPipes])
+                lower_pipe_y = np.array([p['y'] for p in lowerPipes])
+
+                # AABB collision: broadcast (num_birds,) against (num_pipes,) -> (num_birds, num_pipes)
+                # Check upper pipes
+                upper_hit = (
+                    (player_right[:, None] >= pipe_x) &
+                    (player_left[:, None] <= pipe_x + PIPE_WIDTH) &
+                    (player_bottom[:, None] >= upper_pipe_y) &
+                    (player_top[:, None] <= upper_pipe_y + PIPE_HEIGHT)
+                )
+                # Check lower pipes
+                lower_hit = (
+                    (player_right[:, None] >= pipe_x) &
+                    (player_left[:, None] <= pipe_x + PIPE_WIDTH) &
+                    (player_bottom[:, None] >= lower_pipe_y) &
+                    (player_top[:, None] <= lower_pipe_y + PIPE_HEIGHT)
+                )
+                # Kill birds that hit any pipe
+                pipe_dead = (upper_hit | lower_hit).any(axis=1)
+                alive &= ~pipe_dead
 
                 # Check if all dead
                 if not np.any(alive):
@@ -1354,8 +1417,14 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         fitness_label = FITNESS_LABELS.get(fitness_method, fitness_method)
         print(f"Gen {generation} | Pipes: {gen_best_pipes} (best: {best_pipes_ever}) | Raw: {gen_best_raw:.0f} (best: {best_raw_ever:.0f}) | {fitness_label}: {gen_best_fitness:.0f} (best: {best_fitness_ever:.0f}) | Mean: {mean_fitness:.0f} | σ: {sigma:.0f}")
 
-        # Evolve population
+        # Evolve population and re-stack tensors for batch inference
         population.evolve()
+
+        # Run diagnostic on best bird (slot 0 after evolve)
+        run_best_bird_diagnostic(population.individuals[0], runs_per_bird, generation, diag_log,
+                                  gen_best_fitness, fitness_label, winner_min_run, winner_max_run)
+
+        population.stack_tensors()
         generation += 1
 
 
@@ -1403,6 +1472,181 @@ def checkCrash(player, upperPipes, lowerPipes):
             return [True, False]
 
     return [False, False]
+
+
+def classify_gap(gap_y):
+    """Classify gap as LOW/MID/HIGH based on Y position."""
+    if gap_y > 300:
+        return 'LOW'
+    elif gap_y < 200:
+        return 'HIGH'
+    return 'MID'
+
+
+def check_crash_type(bird_y, bird_x, upperPipes, lowerPipes):
+    """Returns crash type string or None if no crash."""
+    if bird_y < 0:
+        return 'CEILING'
+    if bird_y + PLAYER_HEIGHT >= BASEY - 1:
+        return 'FLOOR'
+
+    # Check pipe collisions using same logic as checkCrash
+    margin = 3
+    player_rect = pygame.Rect(bird_x + margin, bird_y + margin,
+                               PLAYER_WIDTH - 2 * margin, PLAYER_HEIGHT - 2 * margin)
+
+    for uPipe, lPipe in zip(upperPipes, lowerPipes):
+        uRect = pygame.Rect(uPipe['x'], uPipe['y'], PIPE_WIDTH, PIPE_HEIGHT)
+        lRect = pygame.Rect(lPipe['x'], lPipe['y'], PIPE_WIDTH, PIPE_HEIGHT)
+
+        if player_rect.colliderect(uRect):
+            return 'UPPER_PIPE'
+        if player_rect.colliderect(lRect):
+            return 'LOWER_PIPE'
+
+    return None
+
+
+def calc_difficulty(gap_history):
+    """Calculate difficulty score based on gap transitions.
+    Higher score = harder (more/larger gap jumps).
+    Returns average absolute delta between consecutive gaps."""
+    if len(gap_history) < 2:
+        return 0.0
+    deltas = [abs(gap_history[i+1] - gap_history[i]) for i in range(len(gap_history) - 1)]
+    return sum(deltas) / len(deltas)
+
+
+def run_diagnostic_solo(bird):
+    """Run single bird through a test, return failure analysis."""
+    # Initialize game state (no rendering)
+    newPipe1 = getRandomPipe()
+    newPipe2 = getRandomPipe()
+    newPipe2[0]['x'] += PIPE_SPACING
+    newPipe2[1]['x'] += PIPE_SPACING
+    upperPipes = [newPipe1[0], newPipe2[0]]
+    lowerPipes = [newPipe1[1], newPipe2[1]]
+
+    all_gaps = []  # Track ALL gap Y positions encountered
+    gap_history = []  # Track gap Y positions of pipes passed
+
+    bird_x = int(SCREENWIDTH * 0.2)
+    bird_y = int((SCREENHEIGHT - PLAYER_HEIGHT) / 2)
+    bird_vel = 0
+    score = 0
+
+    # Record initial gaps
+    all_gaps.append(lowerPipes[0]['y'])
+    all_gaps.append(lowerPipes[1]['y'])
+
+    while True:
+        # Physics
+        if bird_vel < MAX_FALL_SPEED:
+            bird_vel += GRAVITY
+        bird_y += bird_vel
+
+        # Move pipes
+        for uPipe, lPipe in zip(upperPipes, lowerPipes):
+            uPipe['x'] += PIPE_SPEED
+            lPipe['x'] += PIPE_SPEED
+
+        # Add new pipe when needed
+        if upperPipes[-1]['x'] < SCREENWIDTH - PIPE_SPACING:
+            newPipe = getRandomPipe()
+            upperPipes.append(newPipe[0])
+            lowerPipes.append(newPipe[1])
+            all_gaps.append(newPipe[1]['y'])  # Record new gap
+
+        # Remove old pipes
+        if upperPipes[0]['x'] < -PIPE_WIDTH:
+            upperPipes.pop(0)
+            lowerPipes.pop(0)
+
+        # Check scoring and record gap heights
+        playerMidPos = bird_x + PLAYER_WIDTH / 2
+        for i, pipe in enumerate(upperPipes):
+            pipeMidPos = pipe['x'] + PIPE_WIDTH / 2
+            if pipeMidPos <= playerMidPos < pipeMidPos - PIPE_SPEED:
+                score += 1
+                # Record the gap Y position (top of lower pipe)
+                gap_history.append(lowerPipes[i]['y'])
+
+        # Check crash
+        crash_type = check_crash_type(bird_y, bird_x, upperPipes, lowerPipes)
+        if crash_type:
+            return {
+                'score': score,
+                'gap_history': gap_history[-5:] if gap_history else [],
+                'crash_type': crash_type,
+                'bird_y': bird_y,
+                'bird_vel': bird_vel,
+                'difficulty': calc_difficulty(all_gaps)
+            }
+
+        # AI decision (5-input)
+        pipe1_x = upperPipes[0]['x']
+        pipe1_gap_y = lowerPipes[0]['y']
+        dx1 = (pipe1_x + PIPE_WIDTH // 2) - (bird_x + PLAYER_WIDTH // 2)
+        dy1 = (bird_y + PLAYER_HEIGHT // 2) - (pipe1_gap_y - PIPEGAPSIZE // 2)
+
+        if len(upperPipes) > 1:
+            pipe2_x = upperPipes[1]['x']
+            pipe2_gap_y = lowerPipes[1]['y']
+        else:
+            pipe2_x = pipe1_x + PIPE_SPACING
+            pipe2_gap_y = pipe1_gap_y
+
+        dx2 = (pipe2_x + PIPE_WIDTH // 2) - (bird_x + PLAYER_WIDTH // 2)
+        dy2 = (bird_y + PLAYER_HEIGHT // 2) - (pipe2_gap_y - PIPEGAPSIZE // 2)
+
+        bird.set_input(dx1, dy1, dx2, dy2, bird_vel)
+        if bird.fly_up():
+            bird_vel = FLAP_STRENGTH
+
+
+def run_best_bird_diagnostic(bird, runs_per_bird, generation, log_file,
+                              fitness_value, fitness_label, train_min, train_max):
+    """Run best bird N times, log worst 3 runs and best run with difficulty."""
+    results = []
+    for _ in range(runs_per_bird):
+        result = run_diagnostic_solo(bird)
+        results.append(result)
+
+    # Sort by score (ascending) to get worst runs first
+    results.sort(key=lambda r: r['score'])
+
+    # Convert training min/max to pipes
+    train_min_pipes = train_min / PIPE_SPACING
+    train_max_pipes = train_max / PIPE_SPACING
+    fitness_pipes = fitness_value / PIPE_SPACING
+
+    log_file.write(f"Gen {generation} | {fitness_label}: {fitness_pipes:.1f} pipes | Train min/max: {train_min_pipes:.1f}/{train_max_pipes:.1f} pipes\n")
+
+    # Log top 3 worst runs
+    log_file.write("  WORST RUNS:\n")
+    for i, run in enumerate(results[:3]):
+        if run['gap_history']:
+            gaps_str = ' -> '.join(f"{classify_gap(g)}({g})" for g in run['gap_history'])
+        else:
+            gaps_str = '(no pipes passed)'
+
+        rank = i + 1
+        log_file.write(f"    #{rank}: pipe {run['score']} | diff={run['difficulty']:.1f} | {run['crash_type']} at y={run['bird_y']:.0f}, vel={run['bird_vel']:.1f}\n")
+        log_file.write(f"        Gaps: {gaps_str}\n")
+
+    # Log best run
+    best = results[-1]
+    if best['gap_history']:
+        best_gaps_str = ' -> '.join(f"{classify_gap(g)}({g})" for g in best['gap_history'])
+    else:
+        best_gaps_str = '(no pipes passed)'
+
+    log_file.write("  BEST RUN:\n")
+    log_file.write(f"    pipe {best['score']} | diff={best['difficulty']:.1f} | {best['crash_type']} at y={best['bird_y']:.0f}, vel={best['bird_vel']:.1f}\n")
+    log_file.write(f"        Gaps: {best_gaps_str}\n")
+
+    log_file.write("\n")
+    log_file.flush()
 
 
 def getHitmask(image):

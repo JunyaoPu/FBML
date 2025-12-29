@@ -1,0 +1,11 @@
+{
+  "population": 2000,
+  "mutation_rate": 0.01,
+  "parent_fraction": 0.1,
+  "hidden_structure": [
+    10
+  ],
+  "runs_per_bird": 10,
+  "fitness_method": "avg",
+  "render_skip": 500
+}

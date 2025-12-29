@@ -1,4 +1,3 @@
-import networkx as nx
 import numpy as np
 
 epsilon = 0.1
@@ -21,7 +20,7 @@ def sigmoid(x):
 
 class BirdNet:
     # Network structure (can be overridden in __init__)
-    inputNodeNum = 3      # dx, dy, velocity
+    inputNodeNum = 5      # dx1, dy1, dx2, dy2, velocity (both pipes visible)
     outputNodeNum = 1     # Single output: > 0.5 = flap
 
     def __init__(self, hidden_structure=None):
@@ -41,17 +40,17 @@ class BirdNet:
 
         # Game parameters
         self.birdVelY = 0
-        self.birdFlapped = False
-        self.xMidPos = 0
         self.output = None
 
         # Build network: input → hidden layers → output
         networkStructure = [self.inputNodeNum] + hidden_structure + [self.outputNodeNum]
 
         for i in range(len(networkStructure) - 1):
-            columns = int(networkStructure[i])
-            rows = int(networkStructure[i + 1])
-            self.tensors.append(np.random.uniform(w_min, w_max, (rows, columns)))
+            columns = int(networkStructure[i])  # fan_in
+            rows = int(networkStructure[i + 1])  # fan_out
+            # Xavier uniform initialization: scales with layer size
+            limit = np.sqrt(6.0 / (columns + rows))
+            self.tensors.append(np.random.uniform(-limit, limit, (rows, columns)))
 
         for nodes in networkStructure:
             self.vectors.append(np.zeros(shape=(nodes, 1)))
@@ -61,16 +60,18 @@ class BirdNet:
 
 
 
-    def set_input(self, dx, dy, velocity):
+    def set_input(self, dx1, dy1, dx2, dy2, velocity):
         """
-            Sets values of input nodes.
+            Sets values of input nodes (both pipes visible to network).
         """
         # Cache vectors[0] to avoid repeated LOAD_ATTR + BINARY_SUBSCR
         v0 = self.vectors[0]
         # Normalize all to symmetric -1 to +1 range (using pre-computed reciprocals)
-        v0[0] = (dx - 144) * INV_144   # center around 0: -1 to +1
-        v0[1] = dy * INV_200           # -1 to +1
-        v0[2] = velocity * INV_8       # -1 to +1 (exact range)
+        v0[0] = (dx1 - 144) * INV_144   # Pipe 1: horizontal distance
+        v0[1] = dy1 * INV_200           # Pipe 1: vertical distance to gap
+        v0[2] = (dx2 - 144) * INV_144   # Pipe 2: horizontal distance
+        v0[3] = dy2 * INV_200           # Pipe 2: vertical distance to gap
+        v0[4] = velocity * INV_8        # Bird velocity
 
 
 
@@ -89,30 +90,25 @@ class BirdNet:
         self.output = vectors[-1].item()
 
 
-    def flush_nodes(self):
-        """
-            Returns values of all nodes to int(0).
-        """
-        for vector in self.vectors:
-            vector.fill(0)
-
-
     def flush_distance(self):
 
         self.distance = 0
         self.score = 0
 
 
-    def mutate(self, mutation_strength=0.1):
+    def mutate(self, mutation_strength=0.1, mutation_rate=0.1):
         """
-            Mutates ~10% of weights randomly using vectorized numpy operations.
+            Mutates weights using vectorized numpy operations.
+            mutation_rate: probability each weight is mutated (default 10%)
             mutation_strength: std dev of normal distribution for mutations
         """
         for tensor in self.tensors:
-            mask = np.random.random(tensor.shape) < 0.1
+            mask = np.random.random(tensor.shape) < mutation_rate
             num_mutations = mask.sum()
             if num_mutations > 0:
                 tensor[mask] += np.random.normal(0, mutation_strength, num_mutations)
+                # Prevent unbounded weight drift (keeps sigmoid from saturating)
+                np.clip(tensor, -2.0, 2.0, out=tensor)
 
 
     def fly_up(self):

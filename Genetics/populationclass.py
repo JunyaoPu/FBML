@@ -1,4 +1,4 @@
-from Genetics.birdnetclass import BirdNet
+from Genetics.birdnetclass import BirdNet, sigmoid, INV_144, INV_200, INV_8
 import numpy as np
 import random
 
@@ -46,7 +46,7 @@ class Population:
             clone_weights(parent, child)
             # Scale mutation: best parent = 0.5x, worst parent = 1.5x
             scale = 0.5 + (parent_idx / max(1, num_parents - 1))
-            child.mutate(self.mutation_rate * scale)
+            child.mutate(mutation_strength=self.mutation_rate * scale, mutation_rate=0.1)
         return unfit
 
     def evolve(self):
@@ -80,4 +80,64 @@ class Population:
             x.flush_distance()
 
     def sort(self):
-        self.individuals = sorted(self.individuals, key=lambda x: x.distance, reverse=True)
+        distances = np.array([ind.distance for ind in self.individuals])
+        sorted_indices = np.argsort(-distances)  # Descending order
+        self.individuals = [self.individuals[i] for i in sorted_indices]
+
+    def stack_tensors(self):
+        """Stack all birds' weight tensors into 3D arrays for batch inference.
+        Call this once per generation after evolve() to enable batch_forward()."""
+        if not self.individuals:
+            return
+        num_layers = len(self.individuals[0].tensors)
+        self.stacked_tensors = []
+        for layer_idx in range(num_layers):
+            # Stack: (num_birds, rows, cols)
+            stacked = np.stack([bird.tensors[layer_idx] for bird in self.individuals])
+            self.stacked_tensors.append(stacked)
+
+    def batch_forward(self, dx1, dy1, dx2, dy2, vel, alive_mask):
+        """Batched forward pass for all birds using einsum.
+
+        Args:
+            dx1: numpy array (num_birds,) - distance to first pipe
+            dy1: numpy array (num_birds,) - distance to first pipe's gap
+            dx2: numpy array (num_birds,) - distance to second pipe
+            dy2: numpy array (num_birds,) - distance to second pipe's gap
+            vel: numpy array (num_birds,) - bird velocity
+            alive_mask: numpy array (num_birds,) bool - which birds are alive
+
+        Returns:
+            should_flap: numpy array (num_birds,) bool - which birds should flap
+        """
+        num_birds = len(self.individuals)
+
+        # Get indices of alive birds
+        alive_indices = np.where(alive_mask)[0]
+        if len(alive_indices) == 0:
+            return np.zeros(num_birds, dtype=bool)
+
+        # Normalize inputs for alive birds only (both pipes visible)
+        x = np.column_stack([
+            (dx1[alive_indices] - 144) * INV_144,
+            dy1[alive_indices] * INV_200,
+            (dx2[alive_indices] - 144) * INV_144,
+            dy2[alive_indices] * INV_200,
+            vel[alive_indices] * INV_8
+        ])  # Shape: (n_alive, 5)
+
+        # Forward pass through each layer using einsum
+        for layer_idx, stacked_W in enumerate(self.stacked_tensors):
+            # Get weights for alive birds only: (n_alive, out_dim, in_dim)
+            W = stacked_W[alive_indices]
+            # Batched matrix-vector multiply: einsum('nij,nj->ni', W, x)
+            x = sigmoid(np.einsum('nij,nj->ni', W, x))
+
+        # x is now (n_alive, 1) - squeeze to (n_alive,)
+        outputs = x.squeeze(-1) if x.ndim > 1 else x
+
+        # Build full result array
+        should_flap = np.zeros(num_birds, dtype=bool)
+        should_flap[alive_indices] = outputs > 0.5
+
+        return should_flap
