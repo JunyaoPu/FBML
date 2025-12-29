@@ -92,14 +92,14 @@ class BirdNet:
 
     def mutate(self, mutation_strength=0.1):
         """
-            Mutates ~10% of weights randomly.
+            Mutates ~10% of weights randomly using vectorized numpy operations.
             mutation_strength: std dev of normal distribution for mutations
         """
         for tensor in self.tensors:
-            for i in range(tensor.shape[0]):
-                for j in range(tensor.shape[1]):
-                    if np.random.random() < 0.1:  # Only mutate 10% of weights
-                        tensor[i, j] += np.random.normal(0, mutation_strength)
+            mask = np.random.random(tensor.shape) < 0.1
+            num_mutations = mask.sum()
+            if num_mutations > 0:
+                tensor[mask] += np.random.normal(0, mutation_strength, num_mutations)
 
 
     def fly_up(self):

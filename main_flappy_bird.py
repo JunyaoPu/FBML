@@ -337,9 +337,12 @@ def name_model_screen(screen, game_surface, font, font_large, default_name="", g
 
     # Scale graph to fit screen if provided
     scaled_graph = None
+    overlay = None
     if graph_surface:
         screen_w, screen_h = screen.get_size()
         scaled_graph = pygame.transform.smoothscale(graph_surface, (screen_w, screen_h))
+        # Create overlay once to avoid memory leak from recreating every frame
+        overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
 
     while True:
         for event in pygame.event.get():
@@ -361,8 +364,7 @@ def name_model_screen(screen, game_surface, font, font_large, default_name="", g
         if scaled_graph:
             # Draw graph as full-screen background
             screen.blit(scaled_graph, (0, 0))
-            # Semi-transparent overlay for text readability
-            overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+            # Semi-transparent overlay for text readability (reuse surface)
             overlay.fill((0, 0, 0, 180))
             screen.blit(overlay, (0, 0))
             # Draw text directly on screen
@@ -972,9 +974,17 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             canvas.draw()
             raw_data = canvas.buffer_rgba()
             size = canvas.get_width_height()
+
+            # Free old surface before creating new one
+            if live_graph_surface is not None:
+                del live_graph_surface
+
             live_graph_surface = pygame.image.frombuffer(raw_data, size, "RGBA")
 
+            # Explicitly cleanup matplotlib objects to prevent memory leaks
             live_plt.close(fig)
+            del canvas
+            del raw_data
         except Exception as e:
             print(f"Error updating live graph: {e}")
 
@@ -1259,25 +1269,27 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 all_run_distances[i].append(run_distances[i])
                 cumulative_scores[i] += birds[i].score
 
-        # After all runs: calculate fitness based on method
+        # After all runs: calculate fitness based on method (vectorized for Mac Silicon)
         fitness_method = settings.get('fitness_method', 'min')
+        distances_array = np.array(all_run_distances)  # Shape: (num_birds, runs_per_bird)
+
+        if fitness_method == 'avg':
+            fitness_values = np.mean(distances_array, axis=1)
+        elif fitness_method == 'min':
+            fitness_values = np.min(distances_array, axis=1)
+        elif fitness_method == 'geo':
+            # Geometric mean: (d1 * d2 * ... * dn)^(1/n)
+            safe_distances = np.maximum(distances_array, 1)  # Avoid zero
+            fitness_values = np.prod(safe_distances, axis=1) ** (1.0 / runs_per_bird)
+        elif fitness_method == 'harm':
+            # Harmonic mean: n / (1/d1 + 1/d2 + ... + 1/dn)
+            safe_distances = np.maximum(distances_array, 1)  # Avoid zero
+            fitness_values = runs_per_bird / np.sum(1.0 / safe_distances, axis=1)
+        else:
+            fitness_values = np.mean(distances_array, axis=1)  # Fallback to avg
 
         for i, bird in enumerate(birds):
-            distances = all_run_distances[i]
-            if fitness_method == 'avg':
-                bird.distance = sum(distances) / len(distances)
-            elif fitness_method == 'min':
-                bird.distance = min(distances)
-            elif fitness_method == 'geo':
-                # Geometric mean: (d1 * d2 * ... * dn)^(1/n)
-                product = 1.0
-                for d in distances:
-                    product *= max(d, 1)  # Avoid zero
-                bird.distance = product ** (1.0 / len(distances))
-            elif fitness_method == 'harm':
-                # Harmonic mean: n / (1/d1 + 1/d2 + ... + 1/dn)
-                inv_sum = sum(1.0 / max(d, 1) for d in distances)
-                bird.distance = len(distances) / inv_sum if inv_sum > 0 else 0
+            bird.distance = fitness_values[i]
 
         # Sort birds and their run distances together by fitness (descending)
         sorted_pairs = sorted(zip(birds, all_run_distances, cumulative_scores), key=lambda x: x[0].distance, reverse=True)
