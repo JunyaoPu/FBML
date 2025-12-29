@@ -404,6 +404,16 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         ('fitness_method', 'Fitness', 'selector', FITNESS_METHODS),
     ]
 
+    # Hints for each setting
+    hints = {
+        'population': 'More = diverse gene pool, slower',
+        'mutation_rate': 'Higher = explore more, lower = refine',
+        'parent_fraction': 'Higher = keep more, lower = selective',
+        'hidden_structure': 'More nodes = smarter but harder to train',
+        'runs_per_bird': 'More = reliable fitness, slower',
+        'fitness_method': 'min=consistent, avg=overall, geo/harm=balanced',
+    }
+
     selected = 0
     editing_text = False
     editing_structure = False
@@ -566,7 +576,7 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
 
             y_pos += 35
 
-        # Hints
+        # Controls hint
         if not editing_text and not editing_structure:
             draw_text(game_surface, 'ENTER:edit  LEFT/RIGHT:adjust', SCREENWIDTH // 2, y_pos, font, (150, 150, 150), center=True)
         y_pos += 25
@@ -576,6 +586,12 @@ def train_settings_menu(screen, game_surface, font, font_large, model_name=None)
         start_color = (255, 255, 0) if start_selected else (255, 255, 255)
         start_prefix = '> ' if start_selected else '  '
         draw_text(game_surface, f'{start_prefix}START TRAINING', SCREENWIDTH // 2, y_pos + 10, font, start_color, center=True)
+
+        # Setting-specific hint at bottom
+        if selected < len(items):
+            hint_key = items[selected][0]
+            hint_text = hints.get(hint_key, '')
+            draw_text(game_surface, hint_text, SCREENWIDTH // 2, SCREENHEIGHT - 35, font, (180, 180, 120), center=True)
 
         screen.blit(scale_to_screen(game_surface, screen), (0, 0))
         pygame.display.update()
