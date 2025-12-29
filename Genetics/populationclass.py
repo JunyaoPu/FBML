@@ -5,7 +5,7 @@ import random
 
 parent_fraction = 0.2
 mutation_rate   = 0.2
-bird_num        = 10
+bird_num        = 50
 
 def crossover(father, mother, child):
 

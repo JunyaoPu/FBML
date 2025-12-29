@@ -11,6 +11,9 @@ def mutGen():
 def weightGen():
     return np.random.uniform(-0.001,0.001)
 
+def sigmoid(x):
+    return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
+
 class BirdNet:
     #TODO: Normalize propagation.
     #TODO: Use sigmoid function for activations.
@@ -64,9 +67,12 @@ class BirdNet:
         """
 
         norm = np.sqrt(input1 ** 2 + input2 ** 2)
-        input1 = input1 / norm
-        input2 = input2 / norm
-
+        if norm > 0:
+            input1 = input1 / norm
+            input2 = input2 / norm
+        else:
+            input1 = 0
+            input2 = 0
 
         self.vectors[0][0] = input1
         self.vectors[0][1] = input2
@@ -79,14 +85,12 @@ class BirdNet:
         """
 
         for i in range(len(self.vectors)-1):
-            self.vectors[i + 1] = self.tensors[i].dot(self.vectors[i])
+            self.vectors[i + 1] = sigmoid(self.tensors[i].dot(self.vectors[i]))
 
         if (self.vectors[-1][0] > self.vectors[-1][1]):
             self.output = 1
         else:
             self.output = -1
-
-        #self.output = self.vectors[-1]
 
 
     def flush_nodes(self):
@@ -115,9 +119,9 @@ class BirdNet:
 
     def fly_up(self):
         self.process()
+        self.flush_nodes()
 
         if (self.output > 0.0):
             return True
         else:
             return False
-        self.flush_nodes()

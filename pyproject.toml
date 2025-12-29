@@ -1,0 +1,13 @@
+[project]
+name = "fbml"
+version = "0.1.0"
+description = "Flappy Bird Machine Learning - Genetic algorithm and neural networks for AI-controlled Flappy Bird"
+requires-python = ">=3.8"
+dependencies = [
+    "pygame",
+    "numpy",
+    "networkx",
+]
+
+[project.scripts]
+fbml = "main_flappy_bird:main"
