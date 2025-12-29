@@ -822,7 +822,6 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
     # Training log for graphs
     training_log = []
-    log_file = os.path.join(os.path.dirname(__file__), f'training_log_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv')
 
     clock = pygame.time.Clock()
 
@@ -841,6 +840,12 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
         default_name = f"gen{generation}_best{int(population.best_ever_distance)}"
         save_name = name_model_screen(screen, game_surface, font, font_large, default_name)
         save_model(best_bird, save_name, settings)
+
+        # Create outputs directory structure: outputs/YYYY-MM-DD/
+        now = datetime.now()
+        outputs_dir = os.path.join(os.path.dirname(__file__), 'outputs', now.strftime('%Y-%m-%d'))
+        os.makedirs(outputs_dir, exist_ok=True)
+        log_file = os.path.join(outputs_dir, f'{now.strftime("%H%M%S")}_{save_name}.csv')
 
         # Save CSV log
         if training_log:

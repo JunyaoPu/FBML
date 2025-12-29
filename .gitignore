@@ -1,1 +1,6 @@
 /__pycache__
+/outputs/
+/models/
+training_settings.json
+*.csv
+*.png
