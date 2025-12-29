@@ -329,10 +329,16 @@ def model_select_menu(screen, game_surface, font, font_large, mode):
         clock.tick(60)
 
 
-def name_model_screen(screen, game_surface, font, font_large, default_name=""):
-    """Screen to input a name for the model."""
+def name_model_screen(screen, game_surface, font, font_large, default_name="", graph_surface=None):
+    """Screen to input a name for the model, optionally with graph background."""
     name = default_name
     clock = pygame.time.Clock()
+
+    # Scale graph to fit screen if provided
+    scaled_graph = None
+    if graph_surface:
+        screen_w, screen_h = screen.get_size()
+        scaled_graph = pygame.transform.smoothscale(graph_surface, (screen_w, screen_h))
 
     while True:
         for event in pygame.event.get():
@@ -351,19 +357,31 @@ def name_model_screen(screen, game_surface, font, font_large, default_name=""):
                         name += event.unicode
 
         # Draw
-        game_surface.blit(IMAGES['background'], (0, 0))
-        game_surface.blit(IMAGES['base'], (0, BASEY))
+        if scaled_graph:
+            # Draw graph as full-screen background
+            screen.blit(scaled_graph, (0, 0))
+            # Semi-transparent overlay for text readability
+            overlay = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            screen.blit(overlay, (0, 0))
+            # Draw text directly on screen
+            screen_w, screen_h = screen.get_size()
+            draw_text(screen, 'SAVE MODEL', screen_w // 2, screen_h // 2 - 60, font_large, (255, 255, 255), center=True)
+            draw_text(screen, 'Enter name:', screen_w // 2, screen_h // 2 - 10, font, (200, 200, 200), center=True)
+            display_name = name + '_' if len(name) < 30 else name
+            draw_text(screen, display_name, screen_w // 2, screen_h // 2 + 30, font, (255, 255, 0), center=True)
+            draw_text(screen, 'ENTER to save | ESC for default', screen_w // 2, screen_h // 2 + 80, font, (150, 150, 150), center=True)
+        else:
+            # Fallback to game surface background
+            game_surface.blit(IMAGES['background'], (0, 0))
+            game_surface.blit(IMAGES['base'], (0, BASEY))
+            draw_text(game_surface, 'SAVE MODEL', SCREENWIDTH // 2, 80, font_large, (255, 255, 255), center=True)
+            draw_text(game_surface, 'Enter name:', SCREENWIDTH // 2, 150, font, (200, 200, 200), center=True)
+            display_name = name + '_' if len(name) < 30 else name
+            draw_text(game_surface, display_name, SCREENWIDTH // 2, 190, font, (255, 255, 0), center=True)
+            draw_text(game_surface, 'ENTER to save | ESC for default', SCREENWIDTH // 2, 250, font, (150, 150, 150), center=True)
+            screen.blit(scale_to_screen(game_surface, screen), (0, 0))
 
-        draw_text(game_surface, 'SAVE MODEL', SCREENWIDTH // 2, 80, font_large, (255, 255, 255), center=True)
-        draw_text(game_surface, 'Enter name:', SCREENWIDTH // 2, 150, font, (200, 200, 200), center=True)
-
-        # Input box
-        display_name = name + '_' if len(name) < 30 else name
-        draw_text(game_surface, display_name, SCREENWIDTH // 2, 190, font, (255, 255, 0), center=True)
-
-        draw_text(game_surface, 'ENTER to save | ESC for default', SCREENWIDTH // 2, 250, font, (150, 150, 150), center=True)
-
-        screen.blit(scale_to_screen(game_surface, screen), (0, 0))
         pygame.display.update()
         clock.tick(60)
 
@@ -843,7 +861,9 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
 
     def save_and_generate_graphs():
         """Save model and generate training graphs."""
-        # Save model
+        import io
+
+        # Prepare best bird for saving
         if population.best_ever_weights is not None:
             best_bird = BirdNet()
             for i, tensor in enumerate(population.best_ever_weights):
@@ -852,9 +872,80 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
             population.sort()
             best_bird = population.individuals[0]
 
-        # Prompt for model name
+        # Generate graph first (to show while naming)
+        graph_surface = None
+        fig = None
+        plt = None
+        if training_log:
+            try:
+                import matplotlib
+                matplotlib.use('Agg')  # Non-interactive backend
+                import matplotlib.pyplot as plt
+            except ImportError:
+                plt = None
+
+        if plt and training_log:
+            gens = [r['generation'] for r in training_log]
+            best_dist = [r['best_distance'] for r in training_log]
+            mean_dist = [r['mean_distance'] for r in training_log]
+            sigma = [r['sigma'] for r in training_log]
+            best_score = [r['best_score'] for r in training_log]
+
+            fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+
+            # Settings summary as subtitle
+            struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
+            fitness_label = FITNESS_LABELS.get(settings.get('fitness_method', 'min'), 'min')
+            settings_text = (f"Pop: {settings['population']} | Mut: {settings['mutation_rate']} | "
+                            f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 3-{struct_str}-1 | "
+                            f"Runs: {runs_per_bird} | Fitness: {fitness_label}")
+            fig.suptitle(settings_text, fontsize=9, color='gray', y=0.98)
+
+            # Best distance over time
+            axes[0, 0].plot(gens, best_dist, 'b-', linewidth=2)
+            axes[0, 0].set_xlabel('Generation')
+            axes[0, 0].set_ylabel('Distance')
+            axes[0, 0].set_title('Best Distance per Generation')
+            axes[0, 0].grid(True, alpha=0.3)
+
+            # Mean distance with std band
+            axes[0, 1].plot(gens, mean_dist, 'g-', linewidth=2, label='Mean')
+            axes[0, 1].fill_between(gens,
+                [m - s for m, s in zip(mean_dist, sigma)],
+                [m + s for m, s in zip(mean_dist, sigma)],
+                alpha=0.3, color='green', label='±1 Sigma')
+            axes[0, 1].set_xlabel('Generation')
+            axes[0, 1].set_ylabel('Distance')
+            axes[0, 1].set_title('Mean Distance ± Sigma')
+            axes[0, 1].legend()
+            axes[0, 1].grid(True, alpha=0.3)
+
+            # Best score (pipes passed)
+            axes[1, 0].plot(gens, best_score, 'r-', linewidth=2)
+            axes[1, 0].set_xlabel('Generation')
+            axes[1, 0].set_ylabel('Score (Pipes)')
+            axes[1, 0].set_title('Best Score per Generation')
+            axes[1, 0].grid(True, alpha=0.3)
+
+            # Sigma (diversity)
+            axes[1, 1].plot(gens, sigma, 'm-', linewidth=2)
+            axes[1, 1].set_xlabel('Generation')
+            axes[1, 1].set_ylabel('Sigma')
+            axes[1, 1].set_title('Population Diversity (Sigma)')
+            axes[1, 1].grid(True, alpha=0.3)
+
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+            # Render to pygame surface
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=100)
+            buf.seek(0)
+            graph_surface = pygame.image.load(buf, 'graph.png')
+            buf.close()
+
+        # Prompt for model name with graph as background
         default_name = f"gen{generation}_best{int(population.best_ever_distance)}"
-        save_name = name_model_screen(screen, game_surface, font, font_large, default_name)
+        save_name = name_model_screen(screen, game_surface, font, font_large, default_name, graph_surface)
         save_model(best_bird, save_name, settings)
 
         # Create outputs directory structure: outputs/YYYY-MM-DD/
@@ -871,66 +962,12 @@ def train_game(screen, game_surface, font, font_large, model_name, settings=None
                 writer.writerows(training_log)
             print(f"Training log saved to {log_file}")
 
-            # Generate graphs
-            try:
-                import matplotlib.pyplot as plt
-
-                gens = [r['generation'] for r in training_log]
-                best_dist = [r['best_distance'] for r in training_log]
-                mean_dist = [r['mean_distance'] for r in training_log]
-                sigma = [r['sigma'] for r in training_log]
-                best_score = [r['best_score'] for r in training_log]
-
-                fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-
-                # Settings summary as subtitle
-                struct_str = '-'.join(str(s) for s in settings['hidden_structure'])
-                fitness_label = FITNESS_LABELS.get(settings.get('fitness_method', 'min'), 'min')
-                settings_text = (f"Pop: {settings['population']} | Mut: {settings['mutation_rate']} | "
-                                f"Parents: {settings['parent_fraction']*100:.0f}% | Net: 3-{struct_str}-1 | "
-                                f"Runs: {runs_per_bird} | Fitness: {fitness_label}")
-                fig.suptitle(settings_text, fontsize=9, color='gray', y=0.98)
-
-                # Best distance over time
-                axes[0, 0].plot(gens, best_dist, 'b-', linewidth=2)
-                axes[0, 0].set_xlabel('Generation')
-                axes[0, 0].set_ylabel('Distance')
-                axes[0, 0].set_title('Best Distance per Generation')
-                axes[0, 0].grid(True, alpha=0.3)
-
-                # Mean distance with std band
-                axes[0, 1].plot(gens, mean_dist, 'g-', linewidth=2, label='Mean')
-                axes[0, 1].fill_between(gens,
-                    [m - s for m, s in zip(mean_dist, sigma)],
-                    [m + s for m, s in zip(mean_dist, sigma)],
-                    alpha=0.3, color='green', label='±1 Sigma')
-                axes[0, 1].set_xlabel('Generation')
-                axes[0, 1].set_ylabel('Distance')
-                axes[0, 1].set_title('Mean Distance ± Sigma')
-                axes[0, 1].legend()
-                axes[0, 1].grid(True, alpha=0.3)
-
-                # Best score (pipes passed)
-                axes[1, 0].plot(gens, best_score, 'r-', linewidth=2)
-                axes[1, 0].set_xlabel('Generation')
-                axes[1, 0].set_ylabel('Score (Pipes)')
-                axes[1, 0].set_title('Best Score per Generation')
-                axes[1, 0].grid(True, alpha=0.3)
-
-                # Sigma (diversity)
-                axes[1, 1].plot(gens, sigma, 'm-', linewidth=2)
-                axes[1, 1].set_xlabel('Generation')
-                axes[1, 1].set_ylabel('Sigma')
-                axes[1, 1].set_title('Population Diversity (Sigma)')
-                axes[1, 1].grid(True, alpha=0.3)
-
-                plt.tight_layout(rect=[0, 0, 1, 0.96])  # Leave room for suptitle
+            # Save graph file
+            if fig and plt:
                 graph_file = log_file.replace('.csv', '.png')
-                plt.savefig(graph_file, dpi=150)
-                plt.close()
+                fig.savefig(graph_file, dpi=150)
+                plt.close(fig)
                 print(f"Training graphs saved to {graph_file}")
-            except ImportError:
-                print("matplotlib not installed - skipping graph generation")
 
     while True:  # Generation loop
         # Multi-run evaluation: track distances per run for each bird

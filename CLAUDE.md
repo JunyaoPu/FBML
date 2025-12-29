@@ -4,52 +4,55 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FBML (Flappy Bird Machine Learning) is a Python project that uses genetic algorithms and neural networks to evolve AI-controlled birds that learn to play Flappy Bird.
+FBML (Flappy Bird Machine Learning) uses genetic algorithms and neural networks to evolve AI-controlled birds that learn to play Flappy Bird. Features a full menu system with model save/load, configurable training parameters, and training visualization.
 
 ## Running the Project
 
 ```bash
-# Run with uv (recommended)
 uv run python main_flappy_bird.py
-
-# Or install dependencies and run directly
-uv sync
-python main_flappy_bird.py
 ```
-
-The game runs autonomously - no user input needed after start. Console outputs generation statistics (mean/std fitness).
 
 ## Architecture
 
-### Core Components
+### main_flappy_bird.py
+Central game file containing pygame loop, menu system, and training logic. Key game states:
+- `STATE_MENU` → `STATE_MODEL_SELECT` → `STATE_TRAIN_SETTINGS` → `STATE_TRAIN`
+- `STATE_MENU` → `STATE_MODEL_SELECT` → `STATE_RUN_MODEL`
+- `STATE_MENU` → `STATE_PLAY` (human play)
 
-**main_flappy_bird.py** - Pygame game loop with Flappy Bird mechanics. Integrates with the genetic algorithm population. Key constants: FPS=600, pipe gap=100px, screen=288x512.
+Game constants: FPS=600 (training), screen=288x512, pipe gap=100px.
 
-**Genetics/birdnetclass.py** - Neural network for bird decision-making:
-- Input: 2 nodes (relative X/Y to nearest pipe, normalized)
-- Hidden: [100, 20, 5] layers
-- Output: 2 nodes (flap if output[0] > output[1])
+### Genetics/birdnetclass.py
+Neural network (BirdNet) for bird decisions:
+- **Input**: 3 nodes (dx to pipe, dy to gap center, velocity) normalized to [-1, 1]
+- **Hidden**: Configurable layers, default [4]
+- **Output**: 1 node with sigmoid, flap if > 0.5
 - Weights initialized in [-1, 1]
 
-**Genetics/populationclass.py** - Population management and evolution:
-- Population size: 10 birds (default)
-- Selection: Top 20% survive as parents
-- Crossover: Random weight selection from parents
-- Mutation rate: 20%
+### Genetics/populationclass.py
+Population management and evolution:
+- **Selection**: Top N% survive as parents (configurable parent_fraction)
+- **Breeding**: Clone parents into children with weighted selection (better parents more likely)
+- **Mutation**: Gaussian noise on 10% of weights, rate scales by parent rank (0.5x for best, 1.5x for worst)
+- **Elitism**: Best-ever bird preserved unmutated in slot 0
 
-**Genetics/evolver.py** - Alternative evolution implementation with 10% parent fraction and 10% mutation probability.
+### Training Settings (configurable in-game)
+- Population size (default 50)
+- Mutation rate (default 0.1)
+- Parent fraction (default 30%)
+- Network structure (default [4])
+- Runs per bird (default 3) - multi-run evaluation for fitness
+- Fitness method: avg, min, geo (geometric mean), harm (harmonic mean)
 
-**Bird.py** - Legacy simple bird class (deprecated, replaced by BirdNet).
+Settings persist to `training_settings.json`.
 
-### Game Loop Flow
+### Model Storage
+- Models saved as `.npz` (weights) + `.json` (settings) in `models/`
+- Training outputs (CSV logs, PNG graphs) in `outputs/YYYY-MM-DD/`
 
-1. Create population of 10 birds with random neural networks
-2. Each generation: run game until all birds crash
-3. Fitness = distance traveled
-4. Evolve: sort by fitness → select parents → crossover → mutate
-5. Print generation stats and repeat
+## Key Implementation Details
 
-## TODOs in Codebase
-
-- `main_flappy_bird.py:10-11` - Generate bird population outside game loop; find way to restart when all birds crash
-- `birdnetclass.py:15-16` - Normalize propagation and use sigmoid function
+- When continuing training from a saved model, network structure is locked (inferred from weights)
+- Population initialization from model: bird 0 = exact copy, birds 1-N = mutated clones
+- Fitness = distance traveled (evaluated over multiple runs, aggregated by selected method)
+- Window is resizable with dynamic scaling
