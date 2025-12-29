@@ -15,67 +15,52 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
 
 class BirdNet:
-    #TODO: Normalize propagation.
-    #TODO: Use sigmoid function for activations.
+    # Network structure (can be overridden in __init__)
+    inputNodeNum = 3      # dx, dy, velocity
+    outputNodeNum = 1     # Single output: > 0.5 = flap
 
-    inputNodeNum    = 2
-    hiddenStructure = [100,20,5]
-    outputNodeNum   = 2
+    def __init__(self, hidden_structure=None):
+        if hidden_structure is None:
+            hidden_structure = [4]
 
-    tensors = None
-    vectors = None
-
-
-
-
-    # Fitness:
-    distance = 0
-
-    # Position:
-    x = 0
-    y = 0
-
-    # Game parameters:
-    score = 0
-    birdVelY = 0
-    birdFlapped = False
-    xMidPos = 0
-
-    output = None
-
-    def __init__(self):
         self.tensors = []
         self.vectors = []
 
-        networkStructure = [self.inputNodeNum] + self.hiddenStructure + [self.outputNodeNum]
+        # Fitness
+        self.distance = 0
+        self.score = 0
+
+        # Position
+        self.x = 0
+        self.y = 0
+
+        # Game parameters
+        self.birdVelY = 0
+        self.birdFlapped = False
+        self.xMidPos = 0
+        self.output = None
+
+        # Build network: input → hidden layers → output
+        networkStructure = [self.inputNodeNum] + hidden_structure + [self.outputNodeNum]
 
         for i in range(len(networkStructure) - 1):
             columns = int(networkStructure[i])
-            rows    = int(networkStructure[i + 1])
-            self.tensors.append(np.random.uniform(w_min,w_max,(rows, columns)))
+            rows = int(networkStructure[i + 1])
+            self.tensors.append(np.random.uniform(w_min, w_max, (rows, columns)))
 
         for nodes in networkStructure:
-            self.vectors.append(np.zeros(shape=(nodes,1)))
+            self.vectors.append(np.zeros(shape=(nodes, 1)))
 
 
 
-    def set_input(self, input1, input2):
+    def set_input(self, dx, dy, velocity):
         """
             Sets values of input nodes.
-
-            Note: Depends on input nodes having the LOWEST indices in graph #FIXME
         """
-
-        norm = np.sqrt(input1 ** 2 + input2 ** 2)
-        if norm > 0:
-            input1 = input1 / norm
-            input2 = input2 / norm
-        else:
-            input1 = 0
-            input2 = 0
-
-        self.vectors[0][0] = input1
-        self.vectors[0][1] = input2
+        # Normalize all to symmetric -1 to +1 range
+        self.vectors[0][0] = (dx - 144) / 144.0   # center around 0: -1 to +1
+        self.vectors[0][1] = dy / 200.0           # -1 to +1
+        self.vectors[0][2] = velocity / 8.0       # -1 to +1 (exact range)
 
 
 
@@ -87,10 +72,8 @@ class BirdNet:
         for i in range(len(self.vectors)-1):
             self.vectors[i + 1] = sigmoid(self.tensors[i].dot(self.vectors[i]))
 
-        if (self.vectors[-1][0] > self.vectors[-1][1]):
-            self.output = 1
-        else:
-            self.output = -1
+        # Single output: sigmoid gives 0-1, flap if > 0.5
+        self.output = float(self.vectors[-1][0, 0])
 
 
     def flush_nodes(self):
@@ -107,21 +90,19 @@ class BirdNet:
         self.score = 0
 
 
-    def mutate(self):
+    def mutate(self, mutation_strength=0.1):
         """
-            Mutates weights.
+            Mutates ~10% of weights randomly.
+            mutation_strength: std dev of normal distribution for mutations
         """
         for tensor in self.tensors:
             for i in range(tensor.shape[0]):
                 for j in range(tensor.shape[1]):
-                    tensor[i,j] += mutGen()
+                    if np.random.random() < 0.1:  # Only mutate 10% of weights
+                        tensor[i, j] += np.random.normal(0, mutation_strength)
 
 
     def fly_up(self):
         self.process()
         self.flush_nodes()
-
-        if (self.output > 0.0):
-            return True
-        else:
-            return False
+        return self.output > 0.5
